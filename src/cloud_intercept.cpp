@@ -2616,7 +2616,7 @@ static void UploadLuaOnShutdown() {
 }
 
 // Supported Steam client versions -- patches and RVAs are only valid for these builds. Index 0 is the newest.
-static constexpr uint64_t SUPPORTED_STEAM_VERSIONS[] = { 1777411435ULL, 1773426488ULL };
+static constexpr uint64_t SUPPORTED_STEAM_VERSIONS[] = { 1777411435ULL };
 
 static bool IsSupportedSteamVersion(uint64_t v) {
     for (uint64_t s : SUPPORTED_STEAM_VERSIONS)
