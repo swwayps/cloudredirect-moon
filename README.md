@@ -1,20 +1,16 @@
 # CloudRedirect
 
-""Steam Cloud"" for 'lua' games.
+""Steam Cloud"" for 'lua' games. Now for Linux!
 
 > ****This software is experimental and under active development.**** The underlying techniques are fairly insane. What this software tries to do is nuts to attempt. This software could damage your save files and probably will! It could overwrite your saves, cause weird conflicts, make your saves disappear, make you cry. Back up any saves you care about before using this software.
 
 >****DO NOT USE THIS SOFTWARE IF YOU ARE AN IDIOT. Do not use this if you do not actively want cloud saves for "lua" games. If all you care about is the Steam Cloud error, disable Steam Cloud in properties for that game.****
 
-> ****Again, this tool is very experimental and could be dangerous. Know what you are using before you use it.****
-
 ## What it does
 
-Valve patched the (sinful) thing SteamTools did to sync saves. Specifically, SteamTools rewrote requests to AppID 760, which is Steam Screenshots. It sent all Steam Cloud requests for non-owned AppIDs there. It did not create prefixes for each individual game, which means that each lua app shared the saves with all others. This can cause saves to conflict if multiple games use the same save file name. This also means that your saves are replicated in the `Steam/Userdata/<steamid>/<appid for lua game>` folder for each lua app.
+Something like Steam Cloud, but for games you cannot use with actual Steam Cloud for because, uhh, reasons?
 
-It also did not support Steam AutoCloud games at all. It would simply show a fake success message for those games.
-
-What _this_ tool does is redirect Steam Cloud requests for games that are injected to Google Drive/OneDrive/a local folder, including AutoCloud games. Everything is native inside the Steam Client, but the actual data is read/written to and from your cloud account. This was much harder to do than just redirecting read/write to an AppID that your account owns, but it was fun to make. It also is less likely to piss off Valve.
+What this tool does is redirect Steam Cloud requests for games that are 'injected' to Google Drive/OneDrive/a local folder, including AutoCloud games. Everything is native inside the Steam Client, but the actual data is read/written to and from your cloud account. This was much harder to do than just redirecting read/write to an AppID that your account owns, but it was fun to make. It also is less likely to piss off Valve.
 
 This isn't uploading your save files manually or something silly like that. It's the real deal. Steam Cloud, but going to a cloud provider and not Valve.
 
@@ -32,16 +28,18 @@ CloudRedirect consists of a C++ DLL and a WPF companion app:
 2. The DLL hooks Steam's internal cloud save RPC handlers via ~~vtable interception~~ black magic.
 3. When a lua game attempts to read or write cloud save data, the DLL intercepts the calls and redirects them to a local cache directory. If the game is owned, the game uses normal Steam Cloud as expected. If a lua is present that only unlocks DLC, the game will use normal Steam Cloud.
 4. More dark magic occurs and the saves are synced to or from your chosen cloud provider. This all is visible in the Steam UI and looks identical to normal Steam Cloud functionality.
-   
+
+For Linux, it consists of a flatpak app and a component that gets loaded during Steam startup. It more or less works the same way as the Windows version conceptually, but for Linux.
+
 ## Supported cloud providers
 
 - **Google Drive**
 - **OneDrive**
 - **Local folder / mapped drive** -- by request of literally one user.
 
-## Usage
+## Usage (Windows)
 
-Make sure you are on Steam version 1777411435 or 1773426488. Those are the only supported versions of Steam.
+Make sure you are on the latest version of Steam. That is the only supported versions of Steam. 
 
 Grab the latest release from the [Releases page](https://github.com/Selectively11/CloudRedirect/releases).
 
@@ -51,7 +49,13 @@ Run the EXE. In Setup, hit 'Run All Patches'. Go to the Cloud Provider tab, sele
 
 That's it. Go launch Steam. Your games should start syncing now. You may have errors if your userdata folder was filled with garbage by SteamTools and the game is a Steam AutoCloud save. In that case, you need to identify which files belong in that folder and which files belong to another game and clean it up. 
 
-## Building from source
+## Usage (Linux)
+
+Make sure you are also on the latest SLSSteam and have DisableCloud set to No. You also need to have your non-owned games listed under AdditionalApps in SLS.
+
+<pending an update, standby>
+
+## Building from source (Windows)
 
 ### Prerequisites
 
@@ -68,3 +72,7 @@ cmake --build build --config Release
 This builds both the C++ DLL (`build/Release/cloud_redirect.dll`) and publishes the WPF app (`ui/bin/publish/CloudRedirect.exe`). The DLL is automatically embedded into the executable.
 
 Or don't build it? Building Windows apps is pain.
+
+## Building from source (Linux)
+
+If you are using Linux and want to build this, I trust that you can figure it out.
