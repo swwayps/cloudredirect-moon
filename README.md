@@ -6,6 +6,8 @@
 
 >****DO NOT USE THIS SOFTWARE IF YOU ARE AN IDIOT. Do not use this if you do not actively want cloud saves for "lua" games. If all you care about is the Steam Cloud error, disable Steam Cloud in properties for that game.****
 
+**Please look at https://github.com/Selectively11/CloudRedirect/discussions/31**
+
 ## What it does
 
 Something like Steam Cloud, but for games you cannot use with actual Steam Cloud for because, uhh, reasons?
