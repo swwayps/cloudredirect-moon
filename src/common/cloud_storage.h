@@ -34,8 +34,7 @@ std::vector<uint8_t> RetrieveBlob(uint32_t accountId, uint32_t appId,
                                   bool* found = nullptr);
 
 bool DeleteBlob(uint32_t accountId, uint32_t appId,
-                const std::string& filename,
-                bool keepTombstoneOnSuccess = false);
+                const std::string& filename);
 bool DeleteBlobStaged(uint32_t accountId, uint32_t appId,
                       const std::string& filename);
 

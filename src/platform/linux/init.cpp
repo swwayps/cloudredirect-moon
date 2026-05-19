@@ -9,9 +9,12 @@
 extern "C" __attribute__((visibility("default")))
 const char* CR_GetVersion() { return CR_VERSION_STRING; }
 #include "cloud_hooks.h"
+#include "cloud_intercept.h"
 #include "cloud_storage.h"
 #include "http_server.h"
+#include "legacy_metadata_cleanup.h"
 #include "log.h"
+#include "steam_kv_injector.h"
 
 #include <dlfcn.h>
 #include <unistd.h>
@@ -223,6 +226,18 @@ static void DoInit()
 
     DebugLog("[CR] DoInit: resolving protobuf helpers\n");
     CloudHooks::ResolveProtobufHelpers(reinterpret_cast<void*>(steamBase), steamSize);
+
+    // Sweep stray *.cloudredirect metadata that older DLL builds or SteamTools'
+    // cloud sync may have pulled into Steam's userdata/{app}/remote/.  The
+    // current build never writes there; matching files are contamination that
+    // pollutes AutoCloud's per-app file inventory.
+    {
+        std::string steamPath = CloudIntercept::GetSteamPath();
+        if (!steamPath.empty())
+            LegacyMetadataCleanup::PruneSteamUserdata(steamPath);
+    }
+
+    SteamKvInjector::Init();
 
     g_initialized.store(true, std::memory_order_release);
     DebugLog("[CR] DoInit: SUCCESS\n");

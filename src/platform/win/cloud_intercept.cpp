@@ -1,5 +1,6 @@
 #include "cloud_intercept.h"
 #include "rpc_handlers.h"
+#include "app_state.h"
 #include "protobuf.h"
 #include "log.h"
 #include "http_server.h"
@@ -82,7 +83,7 @@ static constexpr size_t SC_BDD_STOLEN_BYTES = 14;  // first 14 bytes of prologue
 static constexpr uintptr_t SC_RVA_GLOBAL_ENGINE     = 0x17A70E8;
 // CCMInterface vtable RVA (for validation)
 static constexpr uintptr_t SC_RVA_CCMINTERFACE_VT   = 0x128E7A0;
-// sub_138D199E0 = CNetPacket→CProtoBufNetPacket wrapper
+// sub_138D199E0 = CNetPacketΓåÆCProtoBufNetPacket wrapper
 static constexpr uintptr_t SC_RVA_WRAP_PACKET       = 0xD199E0;
 // sub_138D263B0 = CJobMgr::BRouteMsgToJob
 static constexpr uintptr_t SC_RVA_BROUTEMSG         = 0xD263B0;
@@ -158,7 +159,7 @@ using NotificationSlot8Fn = bool(__fastcall*)(void* thisptr, const char* methodN
 //   rdx = raw data pointer
 //   r8  = raw data size (as int)
 using ParseFromArrayFn = char(__fastcall*)(void* msgBody, const char* data, int size);
-// sub_138BD07E0: SerializeToArray — writes protobuf message to a buffer
+// sub_138BD07E0: SerializeToArray ΓÇö writes protobuf message to a buffer
 //   rcx = protobuf message object
 //   rdx = output buffer pointer
 //   r8  = buffer size (int)
@@ -676,10 +677,10 @@ static std::vector<uint8_t> BuildPacket(uint32_t emsg, const PB::Writer& header,
 // CCMInterface discovery via CSteamEngine global
 //
 // Traversal: qword_139781D38 (global CSteamEngine*)
-//   → engine+3144 (uint32 global user handle)
-//   → engine+3296 (CUtlSortedVector user map)
-//     → array[i] where handle matches → CUser*
-//   → CUser+72 (CCMInterface embedded in CBaseUser)
+//   ΓåÆ engine+3144 (uint32 global user handle)
+//   ΓåÆ engine+3296 (CUtlSortedVector user map)
+//     ΓåÆ array[i] where handle matches ΓåÆ CUser*
+//   ΓåÆ CUser+72 (CCMInterface embedded in CBaseUser)
 static void* FindCCMInterface() {
     uintptr_t userPtr = FindCurrentUser();
     if (!userPtr) return nullptr;
@@ -1288,7 +1289,7 @@ static bool __fastcall ServiceMethodDirectHook(void* thisptr, const char* method
 
     // Flags layout (from IDA decompilation of sub_138914710 / sub_138914A30):
     //   [0-1]: __int64 (routing/request context, leave untouched)
-    //   [2]:   int  - transport success flag (1 = OK, 0 = transport failure → triggers k_EResultTimeout=16)
+    //   [2]:   int  - transport success flag (1 = OK, 0 = transport failure ΓåÆ triggers k_EResultTimeout=16)
     //   [3]:   int  - eresult from response header (1 = k_EResultOK)
     //   [4+]:  char[] - error message string (null-terminated)
     if (flags) {
@@ -1369,7 +1370,9 @@ static bool __fastcall ServiceMethodHook(void* thisptr, const char* methodName,
 
     if (!isNamespace) {
         // Not a namespace app - pass through to real Steam servers
-        LOG("[VtHook] %s app=%u: not namespace, passing through", methodName, appId);
+        // Suppress log for high-frequency non-namespace apps (e.g. 2371090 = Steam Game Notes)
+        if (appId != 2371090)
+            LOG("[VtHook] %s app=%u: not namespace, passing through", methodName, appId);
         return g_originalSlot5(thisptr, methodName, request, response, flags);
     }
 
@@ -1451,8 +1454,8 @@ static bool __fastcall ServiceMethodHook(void* thisptr, const char* methodName,
         // flags layout (from slot 5):
         //   flags[0] = int32_t routing_appid (slot 5 reads *(reqHeader+116) and writes to flags[0])
         //   flags[1] = int32_t (always 1, set in slot 5 constructor)
-        //   flags[2] = int32_t error_code → written to respHeader+220
-        //   flags[3] = int32_t eresult → written to respHeader+216
+        //   flags[2] = int32_t error_code ΓåÆ written to respHeader+220
+        //   flags[3] = int32_t eresult ΓåÆ written to respHeader+216
         //   flags[4..] = char[256] target_job_name
         // flags is int64_t* but actual layout is int32_t[68].
         // Use int32_t* cast to avoid zeroing adjacent fields.
@@ -1557,8 +1560,7 @@ static void UploadStatsOnExit(uint32_t appId) {
     LOG("[Stats] Uploaded stats for app %u (%zu bytes, ok=%d)", appId, data.size(), ok);
 
     if (ok) {
-        CloudStorage::DeleteBlob(accountId, appId, kLegacyStatsMetadataPath,
-                                 /*keepTombstoneOnSuccess=*/true);
+        CloudStorage::DeleteBlob(accountId, appId, kLegacyStatsMetadataPath);
     }
 }
 
@@ -1733,8 +1735,7 @@ static void UploadPlaytimeOnExit(uint32_t appId) {
         cloudPlaytime, cloudPlaytime2wks, mergedPlaytime, mergedPlaytime2wks, mergedLastPlayed, ok);
 
     if (ok) {
-        CloudStorage::DeleteBlob(accountId, appId, kLegacyPlaytimeMetadataPath,
-                                 /*keepTombstoneOnSuccess=*/true);
+        CloudStorage::DeleteBlob(accountId, appId, kLegacyPlaytimeMetadataPath);
     }
 }
 
@@ -1768,10 +1769,9 @@ static bool __fastcall NotificationWrapperHook(void* thisptr, const char* method
         return g_originalSlot8(thisptr, methodName, request);
     }
 
-    // ExitSyncDone: upload stats/playtime, then suppress (don't forward to Valve).
-    // CN advancement is handled by UpdateRemotecacheVdfChangeNumber in CompleteBatch.
-    // Forwarding to Valve would confuse server-side CN tracking for namespace apps
-    // since Valve never received the upload data.
+    // ExitSyncDone: let Steam's internal processing fire so it updates
+    // remotecache.vdf with the CN from BeginAppUploadBatch. The notification
+    // reaches Valve with a namespace app ID it has no record for ΓÇö harmless.
     if (strcmp(methodName, RPC_EXIT_SYNC) == 0) {
         auto bodyBytes = SerializeBodyToBytes(bodyObj);
         auto fields = PB::Parse(bodyBytes.data(), bodyBytes.size());
@@ -1785,6 +1785,8 @@ static bool __fastcall NotificationWrapperHook(void* thisptr, const char* method
         if (accountId != 0) {
             PendingOpsJournal::RecordExitSyncState(accountId, realAppId,
                 uploadsCompleted, uploadsRequired, clientId);
+            // Release cloud session lock ΓÇö server-faithful: sync done, release ownership.
+            CloudStorage::ReleaseCloudSession(accountId, realAppId, clientId);
         }
         if (!g_shuttingDown.load(std::memory_order_acquire)) {
             uint32_t capturedAppId = realAppId;
@@ -1792,17 +1794,15 @@ static bool __fastcall NotificationWrapperHook(void* thisptr, const char* method
                 if (g_syncAchievements) UploadStatsOnExit(capturedAppId);
                 if (g_syncPlaytime) UploadPlaytimeOnExit(capturedAppId);
             });
-            // Re-check shutdown under the same lock used to splice out the
-            // vector, so we never push into an already-drained list.
             std::lock_guard<std::mutex> lock(g_bgThreadsMutex);
             if (g_shuttingDown.load(std::memory_order_acquire)) {
-                t.detach(); // OS reaps at process exit
+                t.detach();
             } else {
                 g_bgThreads.push_back(std::move(t));
             }
         }
-        LOG("[VtHook-Notif] SUPPRESSED %s app=%u (namespace -- CN managed locally)", methodName, realAppId);
-        return true;
+        LOG("[VtHook-Notif] %s app=%u: letting Steam process internally", methodName, realAppId);
+        return g_originalSlot8(thisptr, methodName, request);
     }
 
     // Suppress other Cloud notifications for namespace apps
@@ -1833,8 +1833,9 @@ static bool __fastcall NotificationDirectHook(void* thisptr, const char* methodN
         return g_originalSlot7(thisptr, methodName, bodyObj, flags);
     }
 
-    // ExitSyncDone: upload stats/playtime, then suppress (don't forward to Valve).
-    // See slot 8 handler comment for rationale.
+    // ExitSyncDone: let Steam's internal processing fire so it updates
+    // remotecache.vdf with the CN from BeginAppUploadBatch. The notification
+    // reaches Valve with a namespace app ID it has no record for ΓÇö harmless.
     if (strcmp(methodName, RPC_EXIT_SYNC) == 0) {
         auto bodyBytes = SerializeBodyToBytes(bodyObj);
         auto fields = PB::Parse(bodyBytes.data(), bodyBytes.size());
@@ -1848,23 +1849,12 @@ static bool __fastcall NotificationDirectHook(void* thisptr, const char* methodN
         if (accountId != 0) {
             PendingOpsJournal::RecordExitSyncState(accountId, realAppId,
                 uploadsCompleted, uploadsRequired, clientId);
+            // ReleaseCloudSession and stats/playtime upload handled by slot 8
+            // (NotificationWrapperHook). Slot 7 is a cascade from the same
+            // notification — don't duplicate cloud I/O.
         }
-        if (!g_shuttingDown.load(std::memory_order_acquire)) {
-            uint32_t capturedAppId = realAppId;
-            std::thread t([capturedAppId] {
-                if (g_syncAchievements) UploadStatsOnExit(capturedAppId);
-                if (g_syncPlaytime) UploadPlaytimeOnExit(capturedAppId);
-            });
-            // See NotificationHook (slot 8) above - same shutdown-window race.
-            std::lock_guard<std::mutex> lock(g_bgThreadsMutex);
-            if (g_shuttingDown.load(std::memory_order_acquire)) {
-                t.detach();
-            } else {
-                g_bgThreads.push_back(std::move(t));
-            }
-        }
-        LOG("[VtHook-Notif] SUPPRESSED %s app=%u (direct, namespace -- CN managed locally)", methodName, realAppId);
-        return true;
+        LOG("[VtHook-Notif] %s app=%u (direct): cascade from slot 8, passing through", methodName, realAppId);
+        return g_originalSlot7(thisptr, methodName, bodyObj, flags);
     }
 
     // Suppress other Cloud notifications for namespace apps
@@ -2382,7 +2372,9 @@ static int64_t __fastcall RecvPktMonitorHook(void* thisptr, CNetPacket* pkt) {
         if (method.find("Cloud.") != std::string::npos) {
             auto* eresultField = PB::FindField(p.header, HDR_ERESULT);
             int32_t eresult = eresultField ? (int32_t)eresultField->varintVal : -1;
-            LOG("[RecvMon] %s eresult=%d body=%u bytes", method.c_str(), eresult, p.bodyLen);
+            // Suppress passthrough changelist responses (non-namespace apps spam these)
+            if (method.find("GetAppFileChangelist") == std::string::npos)
+                LOG("[RecvMon] %s eresult=%d body=%u bytes", method.c_str(), eresult, p.bodyLen);
 
             // Hex dump + protobuf parse for changelist responses (for comparing real vs ours)
 #ifdef DEBUG_HEX_DUMP
@@ -3138,7 +3130,7 @@ static void PreStageStatsFromLocalCache(const std::string& steamPath) {
 // DLL auto-update: check GitHub for a newer cloud_redirect.dll, replace on disk.
 
 static bool ParseVersion(const std::string& s, int out[3]) {
-    // "2.0.3" or "v2.0.3" → {2, 0, 3}
+    // "2.0.3" or "v2.0.3" ΓåÆ {2, 0, 3}
     const char* p = s.c_str();
     if (*p == 'v' || *p == 'V') ++p;
     return sscanf(p, "%d.%d.%d", &out[0], &out[1], &out[2]) == 3;
@@ -3536,7 +3528,7 @@ void Init(const std::string& steamPath) {
     if (!g_steamPath.empty() && g_steamPath.back() != '\\')
         g_steamPath += '\\';
 
-    // ── Steam version gate ──────────────────────────────────────────────
+    // ΓöÇΓöÇ Steam version gate ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
     uint64_t detectedVersion = ReadSteamVersion(g_steamPath);
     g_detectedSteamVersion.store(detectedVersion, std::memory_order_relaxed);
     if (detectedVersion == 0) {
@@ -4199,8 +4191,9 @@ bool OnSendPkt(void* thisptr, const uint8_t* data, uint32_t size) {
                     method.c_str(), appId, pkt.bodyLen, count);
                 // Fall through to Approach D below
             } else {
-                LOG("[SendPkt] %s app=%u (%u bytes) -- vtable hook active, passing through",
-                    method.c_str(), appId, pkt.bodyLen);
+                if (appId != 2371090)
+                    LOG("[SendPkt] %s app=%u (%u bytes) -- vtable hook active, passing through",
+                        method.c_str(), appId, pkt.bodyLen);
                 return false;
             }
         } else {
@@ -4448,7 +4441,7 @@ static void ShutdownImpl() {
     // Restore vtable pointers before DLL unload, but skip if steamclient64
     // is gone (Steam's clean exit FreeLibrarys it before ExitProcess; the
     // cached base then points at unmapped memory and VirtualProtect 487s).
-    // Also skip if hook drain timed out — restoring slots with hooks in-flight
+    // Also skip if hook drain timed out ΓÇö restoring slots with hooks in-flight
     // risks control-flow corruption.
     if (!hookDrainTimedOut && g_vtableHookInstalled.load(std::memory_order_acquire) && g_steamClientBase) {
         HMODULE currentSC = GetModuleHandleA("steamclient64.dll");

@@ -22,7 +22,7 @@ uint64_t BatchTracker_ActiveId(uint32_t accountId, uint32_t appId) {
     return it == g_activeUploadBatches.end() ? 0 : it->second.batchId;
 }
 
-void BatchTracker_Begin(uint32_t accountId, uint32_t appId, uint64_t batchId) {
+void BatchTracker_Begin(uint32_t accountId, uint32_t appId, uint64_t batchId, uint64_t assignedCN, uint64_t appBuildId) {
     uint64_t key = MakeAppAccountKey(accountId, appId);
     std::lock_guard<std::mutex> lock(g_uploadBatchMutex);
     if (g_activeUploadBatches.find(key) != g_activeUploadBatches.end()) {
@@ -33,6 +33,8 @@ void BatchTracker_Begin(uint32_t accountId, uint32_t appId, uint64_t batchId) {
     }
     UploadBatchState state;
     state.batchId = batchId;
+    state.assignedCN = assignedCN;
+    state.appBuildId = appBuildId;
     g_activeUploadBatches[key] = std::move(state);
 }
 
@@ -69,6 +71,15 @@ UploadBatchState BatchTracker_Get(uint32_t accountId, uint32_t appId,
         return {};
     }
     return it->second;
+}
+
+void BatchTracker_RecordFilePlatforms(uint32_t accountId, uint32_t appId,
+                                      const std::string& filename, uint32_t platformsToSync) {
+    uint64_t key = MakeAppAccountKey(accountId, appId);
+    std::lock_guard<std::mutex> lock(g_uploadBatchMutex);
+    auto it = g_activeUploadBatches.find(key);
+    if (it == g_activeUploadBatches.end()) return;
+    it->second.filePlatforms[filename] = platformsToSync;
 }
 
 void BatchTracker_Clear(uint32_t accountId, uint32_t appId,

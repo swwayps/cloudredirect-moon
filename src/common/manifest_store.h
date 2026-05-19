@@ -26,12 +26,25 @@ enum class ManifestRepairStatus {
     Incomplete,
 };
 
+// manifest.cloudredirect is a blob, not a typed RPC; must distinguish success/not-found/fetch-error/parse-error.
+enum class ManifestFetchStatus {
+    Ok,            // Downloaded and parsed successfully (manifest may still be empty if cloud genuinely has 0 files)
+    NotFound,      // Manifest blob does not exist on the provider (confirmed absent, not a network error)
+    FetchFailed,   // Download/network error -- transient, retry later
+    ParseFailed,   // Downloaded but JSON was invalid/corrupt
+};
+
+struct ManifestFetchResult {
+    ManifestFetchStatus status = ManifestFetchStatus::FetchFailed;
+    Manifest manifest;
+};
+
 // Initialize the manifest store with the active provider and local root.
 void ManifestStore_Init(const std::string& localRoot,
                         ICloudProvider* provider);
 
-// Fetch manifest from cloud. Returns empty map if not found or error.
-Manifest FetchCloudManifest(uint32_t accountId, uint32_t appId);
+// Fetch manifest from cloud. Returns status + manifest; Ok with empty manifest means cloud has 0 files.
+ManifestFetchResult FetchCloudManifest(uint32_t accountId, uint32_t appId);
 
 // Save manifest to local cache and upload to cloud (async).
 bool SaveManifest(uint32_t accountId, uint32_t appId, const Manifest& manifest);

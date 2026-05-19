@@ -404,6 +404,26 @@ bool OneDriveProvider::UploadBatch(const std::vector<UploadItem>& items) {
         return Upload(items[0].path, items[0].data.data(), items[0].data.size());
     }
 
+    auto rollbackUploaded = [&](const std::vector<std::string>& paths) {
+        for (auto it = paths.rbegin(); it != paths.rend(); ++it) {
+            Remove(*it);
+        }
+    };
+
+    auto uploadIndividually = [&](size_t begin, size_t end, std::vector<std::string>& uploaded) {
+        std::vector<std::string> newUploads;
+        for (size_t i = begin; i < end; ++i) {
+            const auto& item = items[i];
+            if (!Upload(item.path, item.data.data(), item.data.size())) {
+                rollbackUploaded(newUploads);
+                return false;
+            }
+            newUploads.push_back(item.path);
+        }
+        uploaded.insert(uploaded.end(), newUploads.begin(), newUploads.end());
+        return true;
+    };
+
     // OneDrive $batch API: max 20 requests per batch, max 4 MB per request
     constexpr size_t MAX_BATCH_SIZE = 20;
     constexpr size_t MAX_ITEM_SIZE = 4 * 1024 * 1024;
@@ -416,7 +436,7 @@ bool OneDriveProvider::UploadBatch(const std::vector<UploadItem>& items) {
 
         auto token = GetAccessToken();
         if (token.empty()) {
-            for (const auto& path : allUploadedPaths) { Remove(path); }
+            rollbackUploaded(allUploadedPaths);
             return false;
         }
 
@@ -432,8 +452,8 @@ bool OneDriveProvider::UploadBatch(const std::vector<UploadItem>& items) {
                 LOG("[OneDriveProvider] UploadBatch: item %zu exceeds 4MB, falling back to individual upload",
                     i - batchStart);
                 if (!Upload(item.path, item.data.data(), item.data.size())) {
-                    for (const auto& path : individuallyUploaded) { Remove(path); }
-                    for (const auto& path : allUploadedPaths) { Remove(path); }
+                    rollbackUploaded(individuallyUploaded);
+                    rollbackUploaded(allUploadedPaths);
                     return false;
                 }
                 individuallyUploaded.push_back(item.path);
@@ -444,8 +464,8 @@ bool OneDriveProvider::UploadBatch(const std::vector<UploadItem>& items) {
             std::string relFilename;
             if (!ParsePath(item.path, accountId, appId, relFilename) || relFilename.empty()) {
                 LOG("[OneDriveProvider] UploadBatch: bad path '%s'", item.path.c_str());
-                for (const auto& path : individuallyUploaded) { Remove(path); }
-                for (const auto& path : allUploadedPaths) { Remove(path); }
+                rollbackUploaded(individuallyUploaded);
+                rollbackUploaded(allUploadedPaths);
                 return false;
             }
 
@@ -499,8 +519,8 @@ bool OneDriveProvider::UploadBatch(const std::vector<UploadItem>& items) {
                 std::this_thread::sleep_for(std::chrono::seconds(attempt));
                 token = GetAccessToken();
                 if (token.empty()) {
-                    for (const auto& path : individuallyUploaded) { Remove(path); }
-                    for (const auto& path : allUploadedPaths) { Remove(path); }
+                    rollbackUploaded(individuallyUploaded);
+                    rollbackUploaded(allUploadedPaths);
                     return false;
                 }
             }
@@ -512,30 +532,45 @@ bool OneDriveProvider::UploadBatch(const std::vector<UploadItem>& items) {
         }
 
         if (r.status < 200 || r.status >= 300) {
-            LOG("[OneDriveProvider] UploadBatch failed: HTTP %d", r.status);
-            for (const auto& path : individuallyUploaded) { Remove(path); }
-            for (const auto& path : allUploadedPaths) { Remove(path); }
-            return false;
+            LOG("[OneDriveProvider] UploadBatch failed: HTTP %d body=%s", r.status, r.body.c_str());
+            LOG("[OneDriveProvider] UploadBatch: falling back to individual uploads for %zu files", batchCount);
+            if (!uploadIndividually(batchStart, batchEnd, allUploadedPaths)) {
+                rollbackUploaded(individuallyUploaded);
+                rollbackUploaded(allUploadedPaths);
+                return false;
+            }
+            continue;
         }
 
         auto respJson = Json::Parse(r.body);
         auto responses = respJson["responses"];
         if (responses.type != Json::Type::Array) {
             LOG("[OneDriveProvider] UploadBatch: invalid response format");
-            for (const auto& path : individuallyUploaded) { Remove(path); }
-            for (const auto& path : allUploadedPaths) { Remove(path); }
+            rollbackUploaded(individuallyUploaded);
+            rollbackUploaded(allUploadedPaths);
             return false;
         }
 
+        bool fallback = false;
         for (const auto& resp : responses.arrVal) {
             int status = (int)resp["status"].number();
             if (status < 200 || status >= 300) {
-                LOG("[OneDriveProvider] UploadBatch: request %s failed with status %d",
-                    resp["id"].str().c_str(), status);
-                for (const auto& path : individuallyUploaded) { Remove(path); }
-                for (const auto& path : allUploadedPaths) { Remove(path); }
+                auto body = resp["body"];
+                LOG("[OneDriveProvider] UploadBatch: request %s failed with status %d body=%s",
+                    resp["id"].str().c_str(), status, Json::Stringify(body).c_str());
+                fallback = true;
+                break;
+            }
+        }
+
+        if (fallback) {
+            LOG("[OneDriveProvider] UploadBatch: falling back to individual uploads for %zu files", batchCount);
+            if (!uploadIndividually(batchStart, batchEnd, allUploadedPaths)) {
+                rollbackUploaded(individuallyUploaded);
+                rollbackUploaded(allUploadedPaths);
                 return false;
             }
+            continue;
         }
 
         for (const auto& path : individuallyUploaded) {

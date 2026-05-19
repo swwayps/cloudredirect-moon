@@ -1,10 +1,10 @@
 #include "autocloud_bootstrap.h"
 #include "autocloud_scan.h"
+#include "app_state.h"
 #include "cloud_intercept.h"
 #include "cloud_storage.h"
 #include "file_util.h"
 #include "local_storage.h"
-#include "local_metadata_store.h"
 #include "log.h"
 
 #include <algorithm>
@@ -277,7 +277,6 @@ static void BootstrapWorker(uint32_t accountId, uint32_t appId, uint64_t cacheGe
 
     auto fileTokens = CloudStorage::LoadFileTokens(accountId, appId);
     auto rootTokens = CloudStorage::LoadRootTokens(accountId, appId);
-    auto tombstoneSnapshot = LocalMetadataStore::LoadDeleted(accountId, appId);
     std::unordered_set<std::string> remoteBlobNames;
     if (!CloudStorage::ListRemoteBlobNames(accountId, appId, remoteBlobNames)) {
         LOG("[AutoCloudImport] Aborting import for app %u: could not list remote blobs",
@@ -359,11 +358,6 @@ static void BootstrapWorker(uint32_t accountId, uint32_t appId, uint64_t cacheGe
                     appId, fe.relativePath.c_str());
                 continue;
             }
-            if (tombstoneSnapshot.count(fe.relativePath) > 0) {
-                LOG("[AutoCloudImport] Skipping app %u file %s because it has a delete tombstone",
-                    appId, fe.relativePath.c_str());
-                continue;
-            }
         }
 
         pendingImports.push_back({ fe.relativePath, fe.fullPath, fe.modifiedTime, fe.rootToken, isRefresh, fe.sha });
@@ -410,11 +404,6 @@ static void BootstrapWorker(uint32_t accountId, uint32_t appId, uint64_t cacheGe
         if (IsShuttingDownInternal()) {
             LOG("[AutoCloudImport] Aborting mid-import for app %u -- shutdown in progress", appId);
             break;
-        }
-        if (LocalMetadataStore::IsDeleted(accountId, appId, pending.filename)) {
-            LOG("[AutoCloudImport] Skipping app %u file %s because tombstone appeared before commit",
-                appId, pending.filename.c_str());
-            continue;
         }
         if (!pending.refresh && CloudStorage::HasLocalBlob(accountId, appId, pending.filename)) {
             LOG("[AutoCloudImport] Skipping app %u file %s because blob appeared before commit",
@@ -504,7 +493,20 @@ static void BootstrapWorker(uint32_t accountId, uint32_t appId, uint64_t cacheGe
         finish(false, publishGeneration);
         return;
     }
-    CloudStorage::CommitCNWithRetry(accountId, appId, cn);
+    // Publish unified state (CN + manifest atomically)
+    {
+        CloudStorage::CloudAppState state;
+        state.cn = cn;
+        auto localManifest = CloudStorage::LoadLocalManifest(accountId, appId);
+        for (const auto& [name, me] : localManifest) {
+            CloudStorage::FileEntry fe;
+            fe.sha = me.sha;
+            fe.timestamp = me.timestamp;
+            fe.size = me.size;
+            state.files[name] = std::move(fe);
+        }
+        CloudStorage::PublishCloudState(accountId, appId, state);
+    }
 
     // Re-check generation; concurrent invalidation bumps it.
     if (GetTokenGeneration(accountId, appId) != publishGeneration) {

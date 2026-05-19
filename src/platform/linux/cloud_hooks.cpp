@@ -1,6 +1,7 @@
 #include "cloud_hooks.h"
 #include "cloud_intercept.h"
 #include "rpc_handlers.h"
+#include "app_state.h"
 #include "local_storage.h"
 #include "pending_ops_journal.h"
 #include "cloud_storage.h"
@@ -453,10 +454,9 @@ extern "C" int hook_NotificationDirect(void* pThis, const char* methodName, void
         return origFn(pThis, methodName, body, flags);
     }
 
-    // ExitSyncDone: record state, then suppress (don't forward to Valve).
-    // CN advancement is handled by UpdateRemotecacheVdfChangeNumber in CompleteBatch.
-    // Forwarding to Valve would confuse server-side CN tracking for namespace apps
-    // since Valve never received the upload data.
+    // ExitSyncDone: let Steam's internal processing fire so it updates
+    // remotecache.vdf with the CN from BeginAppUploadBatch. The notification
+    // reaches Valve with a namespace app ID it has no record for -- harmless.
     if (strcmp(methodName, CloudIntercept::RPC_EXIT_SYNC) == 0) {
         CR_SetCrashContext("NotificationDirect:exit-sync", methodName, appId);
         auto bodyBytes = SerializeMessage(body);
@@ -471,9 +471,10 @@ extern "C" int hook_NotificationDirect(void* pThis, const char* methodName, void
         if (accountId != 0) {
             PendingOpsJournal::RecordExitSyncState(accountId, appId,
                 uploadsCompleted, uploadsRequired, clientId);
+            CloudStorage::ReleaseCloudSession(accountId, appId, clientId);
         }
-        LOG("[Hook-Notif] SUPPRESSED %s app=%u (namespace -- CN managed locally)", methodName, appId);
-        return 1;
+        LOG("[Hook-Notif] %s app=%u: letting Steam process internally", methodName, appId);
+        return origFn(pThis, methodName, body, flags);
     }
 
     // Suppress other Cloud notifications for namespace apps
@@ -484,7 +485,7 @@ extern "C" int hook_NotificationDirect(void* pThis, const char* methodName, void
 // Hook: SyncSend2 (slot 8)
 //
 // 32-bit cdecl: int(void* this, const char* method, void* buf, uint32_t bufLen, void* resp, int* flags)
-// Buffer-based variant — raw protobuf bytes are directly available.
+// Buffer-based variant -- raw protobuf bytes are directly available.
 
 extern "C" int hook_SyncSend2(void* pThis, const char* methodName, void* buf, unsigned int bufLen, void* response, int* flags)
 {

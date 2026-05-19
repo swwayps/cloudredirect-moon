@@ -12,8 +12,11 @@ uint64_t MakeAppAccountKey(uint32_t accountId, uint32_t appId);
 
 struct UploadBatchState {
     uint64_t batchId = 0;
+    uint64_t assignedCN = 0;   // CN assigned by BeginAppUploadBatch (= currentCN + 1)
+    uint64_t appBuildId = 0;
     std::unordered_set<std::string> uploads;
     std::unordered_set<std::string> deletes;
+    std::unordered_map<std::string, uint32_t> filePlatforms; // filename -> platforms_to_sync
 };
 
 // Allocate the next unique batch ID (monotonic per process).
@@ -23,13 +26,17 @@ uint64_t BatchTracker_NextId();
 uint64_t BatchTracker_ActiveId(uint32_t accountId, uint32_t appId);
 
 // Create a new batch for this (account, app) with the given batch ID.
-void BatchTracker_Begin(uint32_t accountId, uint32_t appId, uint64_t batchId);
+void BatchTracker_Begin(uint32_t accountId, uint32_t appId, uint64_t batchId, uint64_t assignedCN, uint64_t appBuildId);
 
 // Record a file upload or delete in the active batch.  No-op if no active batch.
 void BatchTracker_RecordUpload(uint32_t accountId, uint32_t appId,
                                const std::string& filename);
 void BatchTracker_RecordDelete(uint32_t accountId, uint32_t appId,
                                const std::string& filename);
+
+// Record platforms_to_sync for a file in the active batch.  No-op if no active batch.
+void BatchTracker_RecordFilePlatforms(uint32_t accountId, uint32_t appId,
+                                      const std::string& filename, uint32_t platformsToSync);
 
 // Return the active batch state (caller owns the copy).
 UploadBatchState BatchTracker_Get(uint32_t accountId, uint32_t appId,

@@ -50,6 +50,7 @@ set(COMMON_SOURCES
     src/common/bkv_stats.cpp
     src/common/remotecache_repair.cpp
     src/common/manifest_store.cpp
+    src/common/app_state.cpp
     src/common/token_store.cpp
     src/common/batch_tracker.cpp
     src/common/cloud_staging.cpp
@@ -64,6 +65,7 @@ set(COMMON_SOURCES
     src/common/cloud_provider_base.cpp
     src/common/autocloud_scan.cpp
     src/common/autocloud_bootstrap.cpp
+    src/common/steam_kv_injector.cpp
     src/common/miniz.c
     src/common/miniz_tdef.c
     src/common/miniz_tinfl.c
@@ -257,6 +259,7 @@ if(EXISTS ${CMAKE_SOURCE_DIR}/tests/autocloud_native_tests.cpp)
         src/common/local_metadata_store.cpp
         src/common/legacy_metadata_cleanup.cpp
         src/common/manifest_store.cpp
+        src/common/app_state.cpp
         src/common/token_store.cpp
         src/common/cloud_staging.cpp
         src/common/pending_ops_journal.cpp

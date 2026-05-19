@@ -393,14 +393,6 @@ static void WorkerLoop(int threadId) {
                     LOG("[CloudStorage] BG delete OK [%d]: %s", threadId, item.cloudPath.c_str());
                     OnCloudSuccess();
                     success = true;
-                    if (!item.suppressTombstoneClear) {
-                        uint32_t doneAcct = 0, doneApp = 0;
-                        std::string doneFile;
-                        if (CloudStorage::ParseCloudBlobPath(item.cloudPath, doneAcct, doneApp, doneFile)) {
-                            LocalMetadataStore::ClearDeleted(doneAcct, doneApp,
-                                                       CloudStorage::CanonicalizeInternalMetadataName(doneFile));
-                        }
-                    }
                 } else {
                     LOG("[CloudStorage] BG delete FAILED [%d]: %s", threadId, item.cloudPath.c_str());
                     OnCloudFailure("Delete", item.cloudPath);

@@ -27,7 +27,7 @@ private slots:
 private:
     QString generateRandomString(int length);
     QString computeCodeChallenge(const QString &verifier);
-    void exchangeCodeForTokens(const QString &code);
+    void exchangeCodeForTokens(const QString &code, int retryCount = 0);
 
     QTcpServer *m_server = nullptr;
     QString m_provider;

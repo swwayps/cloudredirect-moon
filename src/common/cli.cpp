@@ -4,6 +4,7 @@
 #include "cli.h"
 #include "legacy_metadata_cleanup.h"
 #include "cloud_storage.h"
+#include "app_state.h"
 #include "local_storage.h"
 #include "pending_ops_journal.h"
 #include "cloud_provider.h"
@@ -547,7 +548,6 @@ std::string CmdSyncRemoteApp(const std::string& provider, const std::string& acc
     auto localFiles = LocalStorage::GetFileList(parsedAccountId, parsedAppId);
     auto rootTokens = LocalMetadataStore::LoadRootTokens(parsedAccountId, parsedAppId);
     auto fileTokens = LocalMetadataStore::LoadFileTokens(parsedAccountId, parsedAppId);
-    auto deleted = LocalMetadataStore::LoadDeleted(parsedAccountId, parsedAppId);
 
     CloudStorage::Shutdown();
 
@@ -558,8 +558,7 @@ std::string CmdSyncRemoteApp(const std::string& provider, const std::string& acc
         {"local_cn", JsonInt(static_cast<int64_t>(localCN))},
         {"local_file_count", JsonInt(static_cast<int64_t>(localFiles.size()))},
         {"root_token_count", JsonInt(static_cast<int64_t>(rootTokens.size()))},
-        {"file_token_count", JsonInt(static_cast<int64_t>(fileTokens.size()))},
-        {"deleted_count", JsonInt(static_cast<int64_t>(deleted.size()))}
+        {"file_token_count", JsonInt(static_cast<int64_t>(fileTokens.size()))}
     });
 }
 
@@ -684,10 +683,18 @@ std::string CmdPublishFullManifest(const std::string& provider, const std::strin
     PendingOpsJournal::Init(storageRoot);
     CloudStorage::Init(cloudRoot, std::move(prov));
 
-    bool manifestOk = CloudStorage::PublishFullManifestForCommit(parsedAccountId, parsedAppId);
-    bool cnOk = manifestOk && CloudStorage::PushCNToCloudSync(
-        parsedAccountId, parsedAppId,
-        LocalStorage::GetChangeNumber(parsedAccountId, parsedAppId));
+    CloudStorage::Manifest localManifest = CloudStorage::BuildManifestFromLocalBlobs(parsedAccountId, parsedAppId);
+    CloudStorage::CloudAppState state;
+    state.cn = LocalStorage::GetChangeNumber(parsedAccountId, parsedAppId);
+    for (const auto& [name, me] : localManifest) {
+        CloudStorage::FileEntry fe;
+        fe.sha = me.sha;
+        fe.timestamp = me.timestamp;
+        fe.size = me.size;
+        state.files[name] = std::move(fe);
+    }
+    bool manifestOk = CloudStorage::PublishCloudState(parsedAccountId, parsedAppId, state);
+    bool cnOk = manifestOk;  // CN is included in state file
     bool drained = CloudWorkQueue::DrainQueueForApp(parsedAccountId, parsedAppId);
 
     CloudStorage::Shutdown();

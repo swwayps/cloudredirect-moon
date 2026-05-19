@@ -161,6 +161,27 @@ std::vector<fs::path> ListNumericSubdirs(const fs::path& parent) {
 
 } // namespace
 
+// Scrub *.cloudredirect and legacy *.dat metadata from userdata/remote/ (contamination from older builds or SteamTools sync)
+static bool IsScrubbableMetadataInRemoteDir(const fs::path& filePath) {
+    const std::string filename = filePath.filename().string();
+
+    constexpr std::string_view kExt = ".cloudredirect";
+    if (filename.size() > kExt.size() &&
+        filename.compare(filename.size() - kExt.size(), kExt.size(), kExt) == 0) {
+        return true;
+    }
+
+    if (filename == CloudIntercept::kLegacyCNFilename ||
+        filename == CloudIntercept::kLegacyManifestFilename ||
+        filename == CloudIntercept::kLegacyFileTokensFilename ||
+        filename == CloudIntercept::kLegacyRootTokenFilename ||
+        filename == CloudIntercept::kLegacyDeletedFilename) {
+        return true;
+    }
+
+    return false;
+}
+
 SweepStats PruneSteamUserdata(const std::string& steamPath) {
     SweepStats stats;
     if (steamPath.empty()) return stats;
@@ -183,6 +204,31 @@ SweepStats PruneSteamUserdata(const std::string& steamPath) {
 
                 // .cloudredirect\ here is a leftover from a mid-evolution DLL.
                 RemoveDirIfPresent(remoteDir / std::string(kCanonicalDir), stats);
+
+                fs::directory_iterator dirIt(remoteDir,
+                    fs::directory_options::skip_permission_denied, ec);
+                fs::directory_iterator dirEnd;
+                if (ec) continue;
+                while (dirIt != dirEnd) {
+                    std::error_code entryEc;
+                    auto st = dirIt->symlink_status(entryEc);
+                    if (entryEc) {
+                        std::error_code stepEc;
+                        dirIt.increment(stepEc);
+                        if (stepEc) break;
+                        continue;
+                    }
+                    // Don't follow symlinks
+                    if (fs::is_regular_file(st) || fs::is_symlink(st)) {
+                        const fs::path& p = dirIt->path();
+                        if (IsScrubbableMetadataInRemoteDir(p)) {
+                            RemoveFileIfPresent(p, stats);
+                        }
+                    }
+                    std::error_code stepEc;
+                    dirIt.increment(stepEc);
+                    if (stepEc) break;
+                }
             }
         }
     } catch (const std::exception& ex) {

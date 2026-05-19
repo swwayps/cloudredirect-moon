@@ -17,6 +17,8 @@ struct FileEntry {
     uint64_t rawSize = 0;
     bool deleted = false;
     uint32_t rootId = 0;          // 0=remote/, 12=WinAppDataLocalLow, etc.
+    uint32_t persistState = 0;    // 0=Persisted, 1=Forgotten, 2=Deleted (from cloud state)
+    uint32_t platformsToSync = 0xFFFFFFFFu; // Platform bitmask (from cloud state)
 };
 
 void Init(const std::string& baseRoot);

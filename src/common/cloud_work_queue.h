@@ -19,7 +19,6 @@ struct WorkItem {
     int         transferRetries = 0;
     int         drainRequeues = 0;
     std::chrono::steady_clock::time_point notBefore = std::chrono::steady_clock::time_point{};
-    bool        suppressTombstoneClear = false;
 };
 
 // User-visible error reporter (MessageBox in production).

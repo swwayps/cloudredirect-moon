@@ -286,6 +286,17 @@ void OAuthService::onNewConnection()
             return;
         }
         QString path = request.mid(4, getEnd - 4);
+        qDebug() << "[OAuth] Received request:" << path;
+
+        // Ignore non-callback requests (favicon, preflight, etc.)
+        if (!path.startsWith("/callback") && !path.startsWith("/?")) {
+            qDebug() << "[OAuth] Ignoring non-callback request";
+            socket->write("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
+            socket->flush();
+            socket->close();
+            socket->deleteLater();
+            return;
+        }
 
         QUrl url("http://localhost" + path);
         QUrlQuery query(url.query());
@@ -294,6 +305,9 @@ void OAuthService::onNewConnection()
         QString error = query.queryItemValue("error");
 
         bool stateValid = (state == m_state);
+        qDebug() << "[OAuth] code present:" << !code.isEmpty()
+                 << "state valid:" << stateValid
+                 << "error:" << error;
 
         QString html;
         if (!error.isEmpty()) {
@@ -325,7 +339,7 @@ void OAuthService::onNewConnection()
     });
 }
 
-void OAuthService::exchangeCodeForTokens(const QString &code)
+void OAuthService::exchangeCodeForTokens(const QString &code, int retryCount)
 {
     auto *nam = new QNetworkAccessManager(this);
     QPointer<OAuthService> self(this);
@@ -357,14 +371,23 @@ void OAuthService::exchangeCodeForTokens(const QString &code)
 
     QNetworkReply *reply = nam->post(req, body.toString(QUrl::FullyEncoded).replace("%20", "+").toUtf8());
 
-    connect(reply, &QNetworkReply::finished, this, [this, self, reply, nam]() {
-        reply->setParent(nullptr);  // detach from nam so deleteLater order doesn't matter
+    connect(reply, &QNetworkReply::finished, this, [this, self, reply, nam, code, retryCount]() {
+        reply->setParent(nullptr);
         reply->deleteLater();
         nam->deleteLater();
 
-        if (!self) return;  // OAuthService was destroyed
+        if (!self) return;
 
         if (reply->error() != QNetworkReply::NoError) {
+            // Retry once — broken IPv6 fails instantly, retry gives IPv4 a chance
+            if (retryCount < 2) {
+                qDebug() << "[OAuth] Token exchange failed, retrying:" << reply->errorString();
+                emit statusMessage("Retrying token exchange...");
+                QTimer::singleShot(500, this, [this, code, retryCount]() {
+                    exchangeCodeForTokens(code, retryCount + 1);
+                });
+                return;
+            }
             emit authFailed(m_provider, "Token exchange failed: " + reply->errorString());
             cancel();
             return;

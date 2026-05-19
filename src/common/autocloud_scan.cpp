@@ -1129,6 +1129,8 @@ std::unordered_map<std::string, std::string> GetRootTokenDirectories(
         std::string xdg = getEnvStr("XDG_CONFIG_HOME");
         linuxXdgConfigHome = xdg.empty() ? (home + "/.config/") : (xdg + "/");
     }
+    // Proton: suppress native Linux roots; token directories must not be advertised
+    // for Windows-effective apps since Steam only uses compatdata/pfx mappings.
     if (effectivePlatform == AutoCloudEffectivePlatform::Windows) {
         linuxHome.clear();
         linuxXdgDataHome.clear();

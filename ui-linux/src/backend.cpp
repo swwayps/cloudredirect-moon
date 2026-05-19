@@ -20,6 +20,7 @@
 #include <QCoreApplication>
 #include <QRegularExpression>
 #include <QAtomicInt>
+#include <QThread>
 #include <unistd.h>
 
 static const char* GDRIVE_CLIENT_ID = "1072944905499-vm2v2i5dvn0a0d2o4ca36i1vge8cvbn0.apps.googleusercontent.com";
@@ -809,16 +810,24 @@ QString Backend::readAccessToken() const
             : "https://oauth2.googleapis.com/token"));
         req.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
         
-        QEventLoop loop;
-        QTimer timeout;
-        timeout.setSingleShot(true);
-        auto *reply = nam.post(req, body.toString(QUrl::FullyEncoded).toUtf8());
-        QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
-        QObject::connect(&timeout, &QTimer::timeout, reply, &QNetworkReply::abort);
-        timeout.start(10000);  // 10s timeout instead of 30s to reduce UI blocking
-        loop.exec();
+        // Retry up to 2 times (broken IPv6 fails instantly, retry gives IPv4 a chance)
+        QNetworkReply *reply = nullptr;
+        for (int attempt = 0; attempt < 3; ++attempt) {
+            QEventLoop loop;
+            QTimer timeout;
+            timeout.setSingleShot(true);
+            reply = nam.post(req, body.toString(QUrl::FullyEncoded).toUtf8());
+            QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+            QObject::connect(&timeout, &QTimer::timeout, reply, &QNetworkReply::abort);
+            timeout.start(10000);
+            loop.exec();
+            if (reply->error() == QNetworkReply::NoError) break;
+            reply->deleteLater();
+            reply = nullptr;
+            if (attempt < 2) QThread::msleep(500);
+        }
         
-        if (reply->error() == QNetworkReply::NoError) {
+        if (reply && reply->error() == QNetworkReply::NoError) {
             QJsonDocument respDoc = QJsonDocument::fromJson(reply->readAll());
             QJsonObject respObj = respDoc.object();
             QString newToken = respObj.value("access_token").toString();
@@ -845,7 +854,7 @@ QString Backend::readAccessToken() const
                 return newToken;
             }
         }
-        reply->deleteLater();
+        if (reply) reply->deleteLater();
         return QString();
     }
     

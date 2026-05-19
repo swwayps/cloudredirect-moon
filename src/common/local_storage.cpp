@@ -3,7 +3,6 @@
 #include "autocloud_util.h"
 #include "cloud_metadata_paths.h"
 #include "file_util.h"
-#include "local_metadata_store.h"
 #include "log.h"
 #include "steam_root_ids.h"
 
@@ -13,8 +12,6 @@ using CloudIntercept::kRootTokenFilename;
 using CloudIntercept::kLegacyRootTokenFilename;
 using CloudIntercept::kFileTokensFilename;
 using CloudIntercept::kLegacyFileTokensFilename;
-using CloudIntercept::kDeletedFilename;
-using CloudIntercept::kLegacyDeletedFilename;
 #ifdef _WIN32
 #include <wincrypt.h>
 #include <ShlObj.h>
@@ -1222,12 +1219,9 @@ bool DeleteFile(uint32_t accountId, uint32_t appId, const std::string& filename)
         uint64_t prevCN = g_changeNumbers[cnKey];
         g_changeNumbers[cnKey] = prevCN + 1;
         if (!SaveChangeNumberLocked(accountId, appId)) {
-            // File removed; tombstone at prevCN and roll back cache.
-            uint64_t cnAtDelete = prevCN;
             g_changeNumbers[cnKey] = prevCN;
-            LocalMetadataStore::MarkDeleted(accountId, appId, filename, cnAtDelete);
-            LOG("DeleteFile: cn.dat persist failed for app %u after removing %s; tombstoned at cn=%llu, rolled back CN",
-                appId, filename.c_str(), (unsigned long long)cnAtDelete);
+            LOG("DeleteFile: cn.dat persist failed for app %u after removing %s; rolled back CN",
+                appId, filename.c_str());
             return false;
         }
         LOG("DeleteFile: app %u %s", appId, filename.c_str());

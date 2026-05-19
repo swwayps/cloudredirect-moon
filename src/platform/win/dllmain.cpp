@@ -3,6 +3,7 @@
 #include "cloud_intercept.h"
 #include "file_util.h"
 #include "cli.h"
+#include "steam_kv_injector.h"
 #include <atomic>
 #include <mutex>
 
@@ -59,6 +60,11 @@ int CloudOnSendPkt(void* thisptr, const uint8_t* data, uint32_t size, void* recv
             }
 
             CloudIntercept::InstallManifestPinHook();
+
+            // Resolve Steam internal pointers for the app-config KV injector.
+            // Used to inject quota/maxnumfiles for namespace apps where PICS
+            // data is incomplete (would otherwise cause AutoCloud eviction).
+            SteamKvInjector::Init();
 
             LOG("CloudRedirect fully initialized with hooks");
         } catch (const std::exception& ex) {
