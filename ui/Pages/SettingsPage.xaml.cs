@@ -89,17 +89,18 @@ public partial class SettingsPage : Page
     {
         ApplyLanguageSelector(snap.Language);
 
+        ParentalSection.Visibility = Visibility.Visible;
         if (snap.Mode == "cloud_redirect")
         {
             SyncSection.Visibility = Visibility.Visible;
-            ParentalSection.Visibility = Visibility.Visible;
             ApplySyncToggles(snap.SyncAchievements, snap.SyncPlaytime, snap.SyncLuas, snap.AutoUpdateDll,
                              snap.ParentalIgnorePlaytime, snap.ParentalBypassPlaytime);
         }
         else
         {
             SyncSection.Visibility = Visibility.Collapsed;
-            ParentalSection.Visibility = Visibility.Collapsed;
+            ApplySyncToggles(false, false, false, false,
+                             snap.ParentalIgnorePlaytime, snap.ParentalBypassPlaytime);
         }
     }
 
