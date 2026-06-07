@@ -55,6 +55,9 @@ void RecordLaunchTime(uint32_t appId);
 void AddNamespaceApp(uint32_t appId);
 void RemoveNamespaceApp(uint32_t appId);
 bool IsNamespaceApp(uint32_t appId);
+// outAdded/outRemoved may be null.
+void SetNamespaceApps(const uint32_t* appIds, uint32_t count,
+                      size_t* outAdded, size_t* outRemoved);
 
 // signal shutdown
 void Shutdown();

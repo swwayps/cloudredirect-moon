@@ -39,4 +39,8 @@ CR_API bool CR_HandleCloudRpc(const char* method, uint32_t appId,
 CR_API void CR_AddApp(uint32_t appId);
 CR_API void CR_RemoveApp(uint32_t appId);
 CR_API bool CR_IsApp(uint32_t appId);
+
+// Replace the namespace-app set with the given list. NULL/0 clears it.
+CR_API void CR_SetApps(const uint32_t* appIds, uint32_t count);
+
 CR_API void CR_Shutdown(void);

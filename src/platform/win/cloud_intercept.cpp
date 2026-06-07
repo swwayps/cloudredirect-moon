@@ -370,6 +370,30 @@ void RemoveNamespaceApp(uint32_t appId) {
     g_namespaceApps.erase(appId);
 }
 
+// Replace the namespace-app set; reports add/remove counts for logging.
+void SetNamespaceApps(const uint32_t* appIds, uint32_t count,
+                      size_t* outAdded, size_t* outRemoved) {
+    std::unordered_set<uint32_t> next;
+    next.reserve(count);
+    for (uint32_t i = 0; i < count; ++i) {
+        if (appIds[i] != 0) next.insert(appIds[i]);
+    }
+    std::lock_guard<std::mutex> lock(g_namespaceAppsMutex);
+    if (outAdded) {
+        size_t added = 0;
+        for (uint32_t id : next)
+            if (g_namespaceApps.count(id) == 0) ++added;
+        *outAdded = added;
+    }
+    if (outRemoved) {
+        size_t removed = 0;
+        for (uint32_t id : g_namespaceApps)
+            if (next.count(id) == 0) ++removed;
+        *outRemoved = removed;
+    }
+    g_namespaceApps = std::move(next);
+}
+
 // per-app launch timestamp for internal playtime tracking
 static std::mutex g_launchTimeMutex;
 static std::unordered_map<uint32_t, time_t> g_launchTimes;

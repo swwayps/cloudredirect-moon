@@ -133,6 +133,15 @@ bool CR_IsApp(uint32_t appId) {
     return CloudIntercept::IsNamespaceApp(appId);
 }
 
+void CR_SetApps(const uint32_t* appIds, uint32_t count) {
+    if (count != 0 && appIds == nullptr) count = 0;
+    size_t added = 0, removed = 0;
+    CloudIntercept::SetNamespaceApps(appIds, count, &added, &removed);
+    if (g_crInitDone.load(std::memory_order_acquire))
+        LOG("[CR_API] SetApps: %u app(s) (%zu added, %zu removed)",
+            count, added, removed);
+}
+
 void CR_Shutdown(void) {
     if (g_crInitDone.load(std::memory_order_acquire)) {
         LOG("[CR_API] Shutdown requested");
