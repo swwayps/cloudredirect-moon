@@ -33,6 +33,10 @@ const PAYLOADS: &[(i64, &[u8])] = &[
         1780352834,
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/embedded/payloads/1780352834/payload")),
     ),
+    (
+        1781041600,
+        include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/embedded/payloads/1781041600/payload")),
+    ),
 ];
 
 pub fn dll_available() -> bool {
