@@ -1,3 +1,5 @@
+**Valve's latest update to Steam changed some stuff I rely on. Not deliberately. I'll fix it when I am fully awake + ship a fix + take a break. Please do not spam Github Issues in the meantime.**
+
 # CloudRedirect
 
 ""Steam Cloud"" for 'lua' games.
