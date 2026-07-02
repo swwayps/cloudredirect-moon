@@ -32,7 +32,7 @@
                 </DockPanel>
             </Border>
 
-            <TextBlock Text="What's new?"
+            <TextBlock Text="{res:Loc News_WhatsNew}"
                        FontSize="28" FontWeight="SemiBold"
                        Foreground="{DynamicResource TextFillColorPrimaryBrush}"
                        Margin="0,0,0,24" />
@@ -41,9 +41,9 @@
             <ui:CardControl Margin="0,0,0,12">
                 <ui:CardControl.Header>
                     <StackPanel>
-                        <TextBlock Text="Achievement and Playtime Sync" FontWeight="SemiBold"
+                        <TextBlock Text="{res:Loc News_AchievementSync_Title}" FontWeight="SemiBold"
                                    Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
-                        <TextBlock Text="Achievements and Playtime can now be synced to the cloud! Cross-device play is supported. Works through the normal Steam systems. Enable in Settings if you are interested. Note that this feature is experimental!"
+                        <TextBlock Text="{res:Loc News_AchievementSync_Description}"
                                    TextWrapping="Wrap"
                                    Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                     </StackPanel>
@@ -54,9 +54,9 @@
             <ui:CardControl Margin="0,0,0,12">
                 <ui:CardControl.Header>
                     <StackPanel>
-                        <TextBlock Text="Achievement Schema Fetching for SteamTools" FontWeight="SemiBold"
+                        <TextBlock Text="{res:Loc News_SchemaFetching_Title}" FontWeight="SemiBold"
                                    Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
-                        <TextBlock Text="CR can now fetch achievement schemas, so games that previously did not display achievements will now display them!"
+                        <TextBlock Text="{res:Loc News_SchemaFetching_Description}"
                                    TextWrapping="Wrap"
                                    Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                     </StackPanel>
@@ -67,9 +67,9 @@
             <ui:CardControl Margin="0,0,0,12">
                 <ui:CardControl.Header>
                     <StackPanel>
-                        <TextBlock Text="Show Lua Game in Status" FontWeight="SemiBold"
+                        <TextBlock Text="{res:Loc News_ShowLuaGame_Title}" FontWeight="SemiBold"
                                    Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
-                        <TextBlock Text="Lua apps can now appear in your Steam status. They appear as a non-Steam game with the correct game name. This change is on by default, disable in Settings if you don't want it."
+                        <TextBlock Text="{res:Loc News_ShowLuaGame_Description}"
                                    TextWrapping="Wrap"
                                    Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                     </StackPanel>
@@ -80,9 +80,9 @@
             <ui:CardControl Margin="0,0,0,12">
                 <ui:CardControl.Header>
                     <StackPanel>
-                        <TextBlock Text="760 Clean Up" FontWeight="SemiBold"
+                        <TextBlock Text="{res:Loc News_760CleanUp_Title}" FontWeight="SemiBold"
                                    Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
-                        <TextBlock Text="There is a new (experimental) tool that can delete the saves that SteamTools uploaded to AppID 760. Read the release notes on Github for more information."
+                        <TextBlock Text="{res:Loc News_760CleanUp_Description}"
                                    TextWrapping="Wrap"
                                    Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                     </StackPanel>
@@ -93,9 +93,9 @@
             <ui:CardControl Margin="0,0,0,12">
                 <ui:CardControl.Header>
                     <StackPanel>
-                        <TextBlock Text="...and more!" FontWeight="SemiBold"
+                        <TextBlock Text="{res:Loc News_AndMore_Title}" FontWeight="SemiBold"
                                    Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
-                        <TextBlock Text="Bug fixes, Google Drive performance improvements, preparation work for future updates, unannounced features sprinkled throughout the CR UI. Fun for all!"
+                        <TextBlock Text="{res:Loc News_AndMore_Description}"
                                    TextWrapping="Wrap"
                                    Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                     </StackPanel>

@@ -55,10 +55,10 @@
                     <ui:CardControl Margin="0,0,0,8">
                         <ui:CardControl.Header>
                             <StackPanel>
-                                <TextBlock Text="Auto Update"
+                                <TextBlock Text="{res:Loc Settings_AutoUpdate}"
                                            FontWeight="SemiBold"
                                            Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
-                                <TextBlock Text="Automatically download latest version of the Cloud Redirect DLL on Steam startup"
+                                <TextBlock Text="{res:Loc Settings_AutoUpdate_Description}"
                                            Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                                            TextWrapping="Wrap" />
                             </StackPanel>

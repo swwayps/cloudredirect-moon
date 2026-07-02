@@ -67,7 +67,7 @@ public partial class StatsPage : Page
 
     private async Task LoadStatsAsync()
     {
-        ShowStatus("Loading data from cloud…");
+        ShowStatus(S.Get("Stats_LoadingFromCloud"));
         CloudUnavailableText.Visibility = Visibility.Collapsed;
         EmptyText.Visibility = Visibility.Collapsed;
 
