@@ -2,17 +2,18 @@
       xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
       xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
       xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+      xmlns:res="clr-namespace:CloudRedirect.Resources"
       ScrollViewer.CanContentScroll="False">
 
     <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="24">
         <StackPanel MaxWidth="800">
 
-            <TextBlock Text="760 Clean Up"
+            <TextBlock Text="{res:Loc Cloud760_Title}"
                        FontSize="28" FontWeight="SemiBold"
                        Foreground="{DynamicResource TextFillColorPrimaryBrush}"
                        Margin="0,0,0,8" />
 
-            <TextBlock Text="View and delete the saves SteamTools wrote to 760 (Steam Screenshots). This will stop SteamTools from redownloading those saves when run without CloudRedirect patches, preventing SteamTools from contaminating the userdata of each injected game."
+            <TextBlock Text="{res:Loc Cloud760_Description}"
                        Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                        TextWrapping="Wrap"
                        Margin="0,0,0,20" />
@@ -29,10 +30,10 @@
                                Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                     <ui:TextBox x:Name="AppIdBox" Text="760" Width="96"
                                 VerticalAlignment="Center" Margin="0,0,12,0" />
-                    <ui:Button x:Name="ConnectButton" Content="Connect"
+                    <ui:Button x:Name="ConnectButton" Content="{res:Loc Cloud760_Connect}"
                                Icon="{ui:SymbolIcon Cloud24}" Appearance="Primary"
                                Click="ConnectButton_Click" Margin="0,0,8,0" />
-                    <ui:Button x:Name="RefreshButton" Content="Refresh"
+                    <ui:Button x:Name="RefreshButton" Content="{res:Loc Cloud760_Refresh}"
                                Icon="{ui:SymbolIcon ArrowSync24}" Appearance="Secondary"
                                IsEnabled="False" Click="RefreshButton_Click" />
                 </StackPanel>
@@ -52,22 +53,22 @@
             <ui:CardControl x:Name="EmptyHintCard" Margin="0,0,0,4">
                 <ui:CardControl.Header>
                     <StackPanel>
-                        <TextBlock Text="No files yet"
+                        <TextBlock Text="{res:Loc Cloud760_NoFilesYet}"
                                    FontWeight="SemiBold"
                                    Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
                         <TextBlock Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                                    TextWrapping="Wrap" Margin="0,2,0,0">
-                            <Run Text="Connect to load your AppID 760 cloud files. If nothing shows up, open the Steam console, run " />
+                            <Run Text="{res:Loc Cloud760_NoFilesYet_Description}" />
                             <Run Text="cloud_sync_up 760" FontFamily="Consolas" />
-                            <Run Text=", then Refresh." />
+                            <Run Text="{res:Loc Cloud760_ThenRefresh}" />
                         </TextBlock>
                     </StackPanel>
                 </ui:CardControl.Header>
                 <StackPanel Orientation="Horizontal">
-                    <ui:Button x:Name="OpenConsoleButton" Content="Open Console"
+                    <ui:Button x:Name="OpenConsoleButton" Content="{res:Loc Cloud760_OpenConsole}"
                                Icon="{ui:SymbolIcon Window24}" Appearance="Secondary"
                                Click="OpenConsoleButton_Click" Margin="0,0,8,0" />
-                    <ui:Button x:Name="CopyCmdButton" Content="Copy Command"
+                    <ui:Button x:Name="CopyCmdButton" Content="{res:Loc Cloud760_CopyCommand}"
                                Icon="{ui:SymbolIcon Copy24}" Appearance="Secondary"
                                Click="CopyCmdButton_Click" />
                 </StackPanel>
@@ -85,9 +86,9 @@
                                VerticalAlignment="Center"
                                Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                     <StackPanel Grid.Column="1" Orientation="Horizontal">
-                        <ui:Button Content="Select All" Appearance="Transparent"
+                        <ui:Button Content="{res:Loc Cloud760_SelectAll}" Appearance="Transparent"
                                    Click="SelectAll_Click" Margin="0,0,4,0" />
-                        <ui:Button Content="Clear" Appearance="Transparent"
+                        <ui:Button Content="{res:Loc Cloud760_Clear}" Appearance="Transparent"
                                    Click="ClearSelection_Click" />
                     </StackPanel>
                 </Grid>
@@ -148,19 +149,19 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                            <TextBlock Text="Delete cloud files"
+                            <TextBlock Text="{res:Loc Cloud760_DeleteCloudFiles}"
                                        FontWeight="SemiBold"
                                        Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
-                            <TextBlock Text="Removing files here is permanent and cannot be undone."
+                            <TextBlock Text="{res:Loc Cloud760_DeleteWarning}"
                                        FontSize="12"
                                        Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                                        Margin="0,2,0,0" />
                         </StackPanel>
                         <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                            <ui:Button x:Name="DeleteSelectedButton" Content="Delete Selected"
+                            <ui:Button x:Name="DeleteSelectedButton" Content="{res:Loc Cloud760_DeleteSelected}"
                                        Icon="{ui:SymbolIcon Delete24}" Appearance="Secondary"
                                        IsEnabled="False" Click="DeleteSelectedButton_Click" Margin="0,0,8,0" />
-                            <ui:Button x:Name="DeleteAllButton" Content="Delete All"
+                            <ui:Button x:Name="DeleteAllButton" Content="{res:Loc Cloud760_DeleteAll}"
                                        Icon="{ui:SymbolIcon Delete24}" Appearance="Danger"
                                        IsEnabled="False" Click="DeleteAllButton_Click" />
                         </StackPanel>

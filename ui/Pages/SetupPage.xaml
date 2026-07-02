@@ -77,11 +77,11 @@
 
             <!-- Manifest endpoint override (ST-only) -->
             <StackPanel x:Name="ManifestEndpointSection" Margin="0,0,0,16">
-                <TextBlock Text="Manifest Endpoint"
+                <TextBlock Text="{res:Loc Setup_ManifestEndpoint}"
                            FontSize="20" FontWeight="SemiBold"
                            Foreground="{DynamicResource TextFillColorPrimaryBrush}"
                            Margin="0,0,0,8" />
-                <TextBlock Text="Override the manifest download URL and User-Agent used by SteamTools. Leave empty to use the default."
+                <TextBlock Text="{res:Loc Setup_ManifestEndpoint_Description}"
                            Foreground="{DynamicResource TextFillColorTertiaryBrush}"
                            TextWrapping="Wrap"
                            Margin="0,0,0,12" />

@@ -6,6 +6,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using CloudRedirect.Resources;
 using CloudRedirect.Services;
 
 namespace CloudRedirect.Pages;
@@ -83,7 +84,9 @@ public partial class Cloud760Page : Page
     {
         int total = _files.Count;
         int sel = _files.Count(f => f.IsChecked);
-        SelectionText.Text = sel > 0 ? $"{sel} of {total} selected" : $"{total} file{(total == 1 ? "" : "s")}";
+        SelectionText.Text = sel > 0
+            ? S.Format("Cloud760_FilesSelected", sel, total)
+            : S.Format("Cloud760_FilesCount", total);
         bool connected = _cloud != null && !_busy;
         DeleteSelectedButton.IsEnabled = connected && sel > 0;
         DeleteAllButton.IsEnabled = connected && total > 0;
@@ -117,7 +120,7 @@ public partial class Cloud760Page : Page
     private void OpenConsoleButton_Click(object sender, RoutedEventArgs e)
     {
         SteamConsole.OpenConsole();
-        StatusText.Text = $"Steam console opened. Run 'cloud_sync_up {ParseAppId()}' there, then Connect.";
+        StatusText.Text = S.Format("Cloud760_ConsoleOpened", ParseAppId());
     }
 
     private void CopyCmdButton_Click(object sender, RoutedEventArgs e)
@@ -125,7 +128,7 @@ public partial class Cloud760Page : Page
         try
         {
             Clipboard.SetText($"cloud_sync_up {ParseAppId()}");
-            StatusText.Text = $"Copied 'cloud_sync_up {ParseAppId()}' to clipboard. Paste it into the Steam console.";
+            StatusText.Text = S.Format("Cloud760_CommandCopied", ParseAppId());
         }
         catch { /* clipboard can transiently fail; ignore */ }
     }
@@ -135,7 +138,7 @@ public partial class Cloud760Page : Page
         if (_busy) return;
         uint appId = ParseAppId();
         SetBusy(true);
-        StatusText.Text = $"Connecting to Steam Cloud as AppID {appId}...";
+        StatusText.Text = S.Format("Cloud760_Connecting", appId);
         _files.Clear();
         UpdateListVisibility();
 
@@ -158,17 +161,17 @@ public partial class Cloud760Page : Page
             _connectedAppId = appId;
 
             LoadRows(result.files);
-            QuotaText.Text = $"{FormatBytes(result.used)} / {FormatBytes(result.total)} used";
+            QuotaText.Text = S.Format("Cloud760_QuotaUsed", FormatBytes(result.used), FormatBytes(result.total));
             StatusText.Text = _files.Count > 0
-                ? $"Loaded {_files.Count} file(s) for AppID {appId}."
-                : $"Connected to AppID {appId}, but no cloud files were found.";
+                ? S.Format("Cloud760_LoadedFiles", _files.Count, appId)
+                : S.Format("Cloud760_ConnectedNoFiles", appId);
         }
         catch (Exception ex)
         {
             _cloud?.Dispose();
             _cloud = null;
             QuotaText.Text = "";
-            StatusText.Text = "Error: " + ex.Message;
+            StatusText.Text = S.Format("Cloud760_Error", ex.Message);
         }
         finally
         {
@@ -180,7 +183,7 @@ public partial class Cloud760Page : Page
     {
         if (_busy || _cloud == null) return;
         SetBusy(true);
-        StatusText.Text = "Refreshing...";
+        StatusText.Text = S.Get("Cloud760_Refreshing");
         try
         {
             var cloud = _cloud;
@@ -193,12 +196,12 @@ public partial class Cloud760Page : Page
             });
 
             LoadRows(result.files);
-            QuotaText.Text = $"{FormatBytes(result.used)} / {FormatBytes(result.total)} used";
-            StatusText.Text = $"Loaded {_files.Count} file(s) for AppID {appId}.";
+            QuotaText.Text = S.Format("Cloud760_QuotaUsed", FormatBytes(result.used), FormatBytes(result.total));
+            StatusText.Text = S.Format("Cloud760_LoadedFiles", _files.Count, appId);
         }
         catch (Exception ex)
         {
-            StatusText.Text = "Error: " + ex.Message;
+            StatusText.Text = S.Format("Cloud760_Error", ex.Message);
         }
         finally
         {
@@ -237,7 +240,7 @@ public partial class Cloud760Page : Page
         }
 
         SetBusy(true);
-        StatusText.Text = $"Deleting {names.Count} file(s)...";
+        StatusText.Text = S.Format("Cloud760_DeletingFiles", names.Count);
 
         try
         {
@@ -252,11 +255,13 @@ public partial class Cloud760Page : Page
                 return (ok, bad);
             });
 
-            StatusText.Text = $"Deleted {deleted} file(s)" + (failed > 0 ? $", {failed} failed." : ".");
+            StatusText.Text = failed > 0
+                ? S.Format("Cloud760_DeletedFilesFailed", deleted, failed)
+                : S.Format("Cloud760_DeletedFiles", deleted);
         }
         catch (Exception ex)
         {
-            StatusText.Text = "Error: " + ex.Message;
+            StatusText.Text = S.Format("Cloud760_Error", ex.Message);
         }
         finally
         {
