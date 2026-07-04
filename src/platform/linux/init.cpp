@@ -258,7 +258,10 @@ static void DoInit()
     g_initialized.store(true, std::memory_order_release);
     DebugLog("[CR] DoInit: SUCCESS\n");
     Log::Info("CloudRedirect initialized successfully (all hooks active)");
-    Notify("Loaded successfully");
+    // Suppress the "Loaded successfully" desktop popup. The host stack already
+    // shows its own load notification on every Steam start, so a second popup
+    // here is redundant noise. The critical/error Notify() calls elsewhere are
+    // kept so genuine init failures still surface to the user.
 }
 
 
@@ -536,12 +539,24 @@ static bool SteamclientMapped()
 
 static void* DeferredInitThread(void*)
 {
-    // Poll for steamclient.so -- under LD_PRELOAD we load before Steam has
-    // mapped steamclient, so a fixed delay is insufficient.
+    // Poll for steamclient.so. Under LD_PRELOAD we load before Steam has mapped
+    // steamclient, so a fixed short delay is insufficient. Upstream uses a fixed
+    // 10s window, which is too short on distros where steamclient.so maps late
+    // (e.g. Arch/CachyOS mapped it >10s after start in testing) -- there the hook
+    // would time out and never attach. Poll with a generous bound instead so the
+    // single LD_PRELOAD load path works universally, only initialising once
+    // steamclient is present.
     DebugLog("[CR] DeferredInit: waiting for steamclient.so\n");
-    for (int i = 0; i < 20; i++) {  // up to 10 seconds
-        if (SteamclientMapped()) break;
+    bool mapped = false;
+    for (int i = 0; i < 240; i++) {  // up to 120 seconds
+        if (SteamclientMapped()) { mapped = true; break; }
         usleep(500000);
+    }
+    if (!mapped) {
+        DebugLog("[CR] DeferredInit: steamclient.so never mapped within window, aborting\n");
+        Log::Error("Init aborted: steamclient.so not mapped within wait window");
+        g_initThreadDone.store(true, std::memory_order_release);
+        return nullptr;
     }
     DebugLog("[CR] DeferredInit: starting\n");
 
