@@ -637,7 +637,21 @@ bool Start(const std::string& blobRoot, uint32_t accountId) {
                     RegisterClientFd(clientFd);
                     g_clientThreads.push_back(ClientThread{std::thread([clientFd, done]() {
                         g_activeConnections.fetch_add(1);
-                        HandleConnection(clientFd);
+                        // HandleConnection -> RetrieveBlob can throw (e.g.
+                        // std::bad_alloc on a large/corrupt blob). An uncaught
+                        // throw on this detached worker thread calls
+                        // std::terminate and aborts the entire Steam client.
+                        // Contain it: log, close the socket, and let only this
+                        // one request fail.
+                        try {
+                            HandleConnection(clientFd);
+                        } catch (const std::exception& ex) {
+                            LOG("[HttpServer] connection handler threw (%s); dropping request", ex.what());
+                            close(clientFd);
+                        } catch (...) {
+                            LOG("[HttpServer] connection handler threw; dropping request");
+                            close(clientFd);
+                        }
                         UnregisterClientFd(clientFd);
                         g_activeConnections.fetch_sub(1);
                         done->store(true, std::memory_order_release);
