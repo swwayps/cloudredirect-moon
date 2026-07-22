@@ -158,8 +158,15 @@ static uint32_t LoadAccountIdFromLoginUsers() {
         return 0;
     }
 
+    struct UserEntry {
+        uint64_t steamId = 0;
+        bool isMostRecent = false;
+        bool isAutoLogin = false;
+        uint64_t timestamp = 0;
+    };
+
+    std::vector<UserEntry> users;
     std::string line;
-    uint64_t mostRecentSteamId = 0;
     uint64_t currentSteamId = 0;
     bool inUser = false;
     int braceDepth = 0;
@@ -191,27 +198,73 @@ static uint32_t LoadAccountIdFromLoginUsers() {
                 if (endp == key.c_str() + key.size() && sid > 76561197960265728ULL) {
                     currentSteamId = sid;
                     inUser = true;
+                    users.push_back({sid, false, false, 0});
                 }
             }
         }
 
-        // At depth 2, look for "MostRecent" "1"
-        if (inUser && braceDepth == 2) {
+        // At depth 2, parse user properties
+        if (inUser && braceDepth == 2 && !users.empty() && users.back().steamId == currentSteamId) {
+            auto& entry = users.back();
             if (trimmed.find("\"MostRecent\"") != std::string::npos &&
                 trimmed.find("\"1\"") != std::string::npos) {
-                mostRecentSteamId = currentSteamId;
+                entry.isMostRecent = true;
+            } else if (trimmed.find("\"AutoLogin\"") != std::string::npos &&
+                       trimmed.find("\"1\"") != std::string::npos) {
+                entry.isAutoLogin = true;
+            } else if (trimmed.find("\"Timestamp\"") != std::string::npos) {
+                size_t firstQ = trimmed.find('"', 11);
+                if (firstQ != std::string::npos) {
+                    size_t secondQ = trimmed.find('"', firstQ + 1);
+                    if (secondQ != std::string::npos) {
+                        std::string tsVal = trimmed.substr(firstQ + 1, secondQ - firstQ - 1);
+                        entry.timestamp = strtoull(tsVal.c_str(), nullptr, 10);
+                    }
+                }
             }
         }
     }
 
-    if (mostRecentSteamId == 0) {
-        LOG("[Linux] No MostRecent user found in loginusers.vdf");
+    if (users.empty()) {
+        LOG("[Linux] No valid user entries in loginusers.vdf");
         return 0;
     }
 
-    uint32_t accountId = (uint32_t)(mostRecentSteamId & 0xFFFFFFFF);
-    LOG("[Linux] Bootstrapped accountId=%u from SteamID64=%llu (loginusers.vdf)",
-        accountId, (unsigned long long)mostRecentSteamId);
+    // Selection priority: MostRecent -> AutoLogin -> Highest Timestamp -> First entry
+    const UserEntry* selected = nullptr;
+    for (const auto& u : users) {
+        if (u.isMostRecent) {
+            selected = &u;
+            break;
+        }
+    }
+
+    if (!selected) {
+        for (const auto& u : users) {
+            if (u.isAutoLogin) {
+                selected = &u;
+                break;
+            }
+        }
+    }
+
+    if (!selected) {
+        uint64_t maxTs = 0;
+        for (const auto& u : users) {
+            if (u.timestamp >= maxTs) {
+                maxTs = u.timestamp;
+                selected = &u;
+            }
+        }
+    }
+
+    if (!selected) {
+        selected = &users.front();
+    }
+
+    uint32_t accountId = (uint32_t)(selected->steamId & 0xFFFFFFFF);
+    LOG("[Linux] Bootstrapped accountId=%u from SteamID64=%llu (loginusers.vdf, mr=%d, al=%d)",
+        accountId, (unsigned long long)selected->steamId, selected->isMostRecent ? 1 : 0, selected->isAutoLogin ? 1 : 0);
     return accountId;
 }
 

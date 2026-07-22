@@ -270,6 +270,13 @@ void CaptureFromOutbound(uint32_t emsg, void* msgObj, void* cmInterface) {
             g_sessionCaptured.store(true, std::memory_order_relaxed);
             LOG("[SchemaFetch] captured session: steamid=0x%llX session=%u",
                 (unsigned long long)sid, ses);
+            if (CloudIntercept::GetAccountId() == 0) {
+                uint32_t acctId = (uint32_t)(sid & 0xFFFFFFFF);
+                if (acctId != 0) {
+                    CloudIntercept::SetAccountId(acctId);
+                    LOG("[SchemaFetch] Dynamically captured accountId=%u from live SteamID", acctId);
+                }
+            }
         }
     }
 
