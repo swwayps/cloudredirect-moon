@@ -6,6 +6,7 @@
 #include "vtable_hook.h"
 #include "gamesplayed_hook.h"
 #include "log.h"
+#include "runtime_safety.h"
 
 #include <atomic>
 #include <cstdio>
@@ -56,11 +57,6 @@ static constexpr uint32_t RESP_SCHEMA  = 4;  // bytes (the schema blob)
 static constexpr uint32_t EMSG_GET_USER_STATS_RESP = 819;
 static constexpr uint32_t PROTO_FLAG               = 0x80000000;
 
-// cmInterface field offsets (32-bit Linux steamclient.so)
-static constexpr uint32_t CCM_OFF_SESSION_ID = 0xD8;   // +216
-static constexpr uint32_t CCM_OFF_STEAMID    = 0x15C;  // +348
-static constexpr uint32_t CCM_OFF_CONNHANDLE = 0x4FC;  // +1276
-
 // Function pointer types.
 using CtorFn     = void(*)(void* msg, int emsg, int flags);
 using FinalizeFn = void*(*)(void* msg);
@@ -84,9 +80,10 @@ static std::atomic<uint32_t> g_realm{0};
 static std::atomic<bool>     g_sessionCaptured{false};
 static std::atomic<uint32_t> g_connHandle{0};
 static std::atomic<uint32_t> g_statsConnHandle{0};
+static LinuxRuntimeSafety::PublishedCcmOffsets g_ccmOffsets;
 // The live CCMInterface pointer (sub_10E6C90's arg_0), captured straight from the
-// outbound hook. This is the exact base sub_10E6C90 dereferences (it reads
-// [+0x4FC] conn, [+0xD8] session, [+0x15C] steamid). Used to fire schema sends.
+// outbound hook. Its field offsets are decoded from the live function because
+// Steam client updates can move them. Used to fire schema sends.
 static std::atomic<void*>    g_cmInterface{nullptr};
 
 // Schema fetch state.
@@ -195,6 +192,15 @@ bool Resolve(uintptr_t base, size_t size, ParseFromArrayFn parseFromArray) {
 
     // Reuse GamesPlayedHook's resolved CCMInterface::Send entry (see note above).
     g_cmSend = (CmSendFn)GamesPlayedHook::GetSendFunc();
+    LinuxRuntimeSafety::CcmOffsets resolvedOffsets;
+    const uintptr_t sendAddress = (uintptr_t)g_cmSend;
+    if (g_cmSend && sendAddress >= base && sendAddress - base < size) {
+        size_t available = size - (sendAddress - base);
+        if (available > 0x140) available = 0x140;
+        resolvedOffsets = LinuxRuntimeSafety::ResolveCcmOffsets(
+            reinterpret_cast<const uint8_t*>(g_cmSend), available);
+    }
+    g_ccmOffsets.Publish(resolvedOffsets);
 
     g_typedVtable = VtableHook::FindVtableByRTTIName(
         "12CProtoBufMsgI22CMsgClientGetUserStatsE", base, size);
@@ -208,8 +214,15 @@ bool Resolve(uintptr_t base, size_t size, ParseFromArrayFn parseFromArray) {
     }
 
     // No dtor resolved: each request leaks ~236B (header+body), bounded per session.
-    bool ok = g_ctor && g_finalize && g_cmSend && g_typedVtable &&
+    bool ok = g_ctor && g_finalize && g_cmSend && resolvedOffsets && g_typedVtable &&
               g_defaultInstance && g_parseFromArray;
+    if (resolvedOffsets) {
+        LOG("[SchemaFetch] CCM layout: conn=0x%X session=0x%X steamid=0x%X",
+            resolvedOffsets.connHandle, resolvedOffsets.sessionId,
+            resolvedOffsets.steamId);
+    } else {
+        LOG("[SchemaFetch] CCM layout could not be resolved; schema fetch disabled");
+    }
     LOG("[SchemaFetch] Resolve: ctor=%p finalize=%p cmSend=%p vtable=%p desc=%p parse=%p -> %s",
         (void*)g_ctor, (void*)g_finalize, (void*)g_cmSend,
         g_typedVtable, g_defaultInstance, (void*)g_parseFromArray,
@@ -219,13 +232,15 @@ bool Resolve(uintptr_t base, size_t size, ParseFromArrayFn parseFromArray) {
 
 // Session capture.
 void CaptureFromOutbound(uint32_t emsg, void* msgObj, void* cmInterface) {
-    if (!cmInterface || !msgObj) return;
+    const LinuxRuntimeSafety::CcmOffsets offsets = g_ccmOffsets.Load();
+    if (!cmInterface || !msgObj || !offsets) return;
 
     // Capture the CCMInterface pointer itself -- this is sub_10E6C90's arg_0.
     g_cmInterface.store(cmInterface, std::memory_order_relaxed);
 
     // Capture connection handle from cmInterface
-    uint32_t conn = *(uint32_t*)((uint8_t*)cmInterface + CCM_OFF_CONNHANDLE);
+    uint32_t conn = LinuxRuntimeSafety::LoadUnaligned<uint32_t>(
+        cmInterface, offsets.connHandle);
     if (conn != 0) {
         // Prefer the handle from GetUserStats (818) -- same CM connection
         if (emsg == EMSG_GET_USER_STATS) {
@@ -236,10 +251,17 @@ void CaptureFromOutbound(uint32_t emsg, void* msgObj, void* cmInterface) {
     }
 
     // Capture session fields from cmInterface (always valid once logged in)
-    if (!g_sessionCaptured.load(std::memory_order_relaxed)) {
-        uint64_t sid = *(uint64_t*)((uint8_t*)cmInterface + CCM_OFF_STEAMID);
-        uint32_t ses = *(uint32_t*)((uint8_t*)cmInterface + CCM_OFF_SESSION_ID);
-        if (sid != 0) {
+    const bool alreadyCaptured = g_sessionCaptured.load(std::memory_order_relaxed);
+    const uint32_t currentSession = g_sessionId.load(std::memory_order_relaxed);
+    if (!alreadyCaptured || currentSession == 0) {
+        uint64_t sid = LinuxRuntimeSafety::LoadUnaligned<uint64_t>(
+            cmInterface, offsets.steamId);
+        uint32_t ses = LinuxRuntimeSafety::LoadUnaligned<uint32_t>(
+            cmInterface, offsets.sessionId);
+        if (LinuxRuntimeSafety::IsExpectedIndividualSteamId(
+                sid, CloudIntercept::GetAccountId()) &&
+            LinuxRuntimeSafety::ShouldUpdateCapturedSession(
+                alreadyCaptured, currentSession, ses)) {
             g_steamId.store(sid, std::memory_order_relaxed);
             g_sessionId.store(ses, std::memory_order_relaxed);
             // Realm: not directly accessible from cmInterface at a known offset.

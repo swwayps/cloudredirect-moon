@@ -1,6 +1,7 @@
 
 #include "cloud_provider_base.h"
 #include "log.h"
+#include "runtime_safety.h"
 
 #include <cerrno>
 #include <cstdlib>
@@ -26,8 +27,6 @@ typedef int CURLoption;
 #define CURLOPT_POSTFIELDS     10015
 #define CURLOPT_POSTFIELDSIZE  60
 #define CURLOPT_CUSTOMREQUEST  10036
-#define CURLOPT_TIMEOUT        13
-#define CURLOPT_CONNECTTIMEOUT 78
 #define CURLOPT_USERAGENT      10018
 #define CURLOPT_FOLLOWLOCATION 52
 #define CURLOPT_HEADERFUNCTION 20079
@@ -194,8 +193,17 @@ static HttpUtil::HttpResp CurlRequest(const char* logTag, const char* method,
     g_curl.easy_setopt(curl, CURLOPT_URL, safeUrl.c_str());
     g_curl.easy_setopt(curl, CURLOPT_WRITEFUNCTION, (void*)WriteCallback);
     g_curl.easy_setopt(curl, CURLOPT_WRITEDATA, &responseBody);
-    g_curl.easy_setopt(curl, CURLOPT_TIMEOUT, timeout);
-    g_curl.easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5L);
+    bool safeTimeouts = LinuxRuntimeSafety::ApplySignalSafeCurlTimeouts(
+        [curl](int option, long value) {
+            return g_curl.easy_setopt(curl, option, value);
+        },
+        timeout, 5L);
+    if (!safeTimeouts) {
+        LOG("%s libcurl rejected signal-safe timeout setup", logTag);
+        std::lock_guard<std::mutex> lock(g_curlHandleMutex);
+        g_curl.easy_cleanup(curl);
+        return resp;
+    }
     g_curl.easy_setopt(curl, CURLOPT_USERAGENT, "CloudRedirect/1.0");
     g_curl.easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L);
 

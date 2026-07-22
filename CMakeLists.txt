@@ -218,6 +218,14 @@ endif()
 
 enable_testing()
 
+if(NOT WIN32)
+    add_executable(linux_runtime_safety_tests
+        test/linux_runtime_safety_tests.cpp
+    )
+    target_include_directories(linux_runtime_safety_tests PRIVATE src/platform/linux)
+    add_test(NAME linux_runtime_safety_tests COMMAND linux_runtime_safety_tests)
+endif()
+
 if(EXISTS ${CMAKE_SOURCE_DIR}/tests/autocloud_native_tests.cpp)
     add_compile_definitions(CR_RELEASE_VERSION="${CR_RELEASE_VERSION}")
     if(WIN32)
