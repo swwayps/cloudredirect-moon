@@ -121,13 +121,32 @@ void Backend::detectSteamPath()
         QStringList lines = content.split('\n');
         QString currentId;
         QString currentPersonaName;
+        qint64 currentTimestamp = -1;
+        QString bestId;
+        QString bestName;
+        qint64 bestTimestamp = -1;
+        QString lastId;
+        QString lastName;
         bool inUser = false;
         int depth = 0;
 
         for (const auto &line : lines) {
             QString trimmed = line.trimmed();
             if (trimmed == "{") { depth++; continue; }
-            if (trimmed == "}") { depth--; if (depth == 1) inUser = false; continue; }
+            if (trimmed == "}") {
+                if (depth == 2 && inUser && !currentId.isEmpty()) {
+                    if (currentTimestamp > bestTimestamp) {
+                        bestTimestamp = currentTimestamp;
+                        bestId = currentId;
+                        bestName = currentPersonaName;
+                    }
+                    lastId = currentId;
+                    lastName = currentPersonaName;
+                }
+                depth--;
+                if (depth == 1) inUser = false;
+                continue;
+            }
 
             if (depth == 1 && trimmed.startsWith('"')) {
                 int end = trimmed.indexOf('"', 1);
@@ -138,6 +157,7 @@ void Backend::detectSteamPath()
                     if (ok && sid > 76561197960265728ULL) {
                         currentId = key;
                         currentPersonaName.clear();
+                        currentTimestamp = -1;
                         inUser = true;
                     }
                 }
@@ -154,11 +174,42 @@ void Backend::detectSteamPath()
                         }
                     }
                 }
+                if (trimmed.contains("\"Timestamp\"")) {
+                    int keyEndQuote = trimmed.indexOf('"', trimmed.indexOf('"') + 1);
+                    int valStart = trimmed.indexOf('"', keyEndQuote + 1);
+                    if (valStart > 0) {
+                        int valEnd = trimmed.indexOf('"', valStart + 1);
+                        if (valEnd > valStart) {
+                            bool ok = false;
+                            qint64 ts = trimmed.mid(valStart + 1, valEnd - valStart - 1).toLongLong(&ok);
+                            if (ok) currentTimestamp = ts;
+                        }
+                    }
+                }
                 if (trimmed.contains("\"MostRecent\"") && trimmed.contains("\"1\"")) {
                     quint64 sid = currentId.toULongLong();
                     m_accountId = QString::number(sid & 0xFFFFFFFF);
                     m_accountName = currentPersonaName;
                 }
+            }
+        }
+
+        // Steam builds sem o campo MostRecent: usa a conta com maior Timestamp,
+        // ou a ultima conta valida vista quando nem Timestamp existe.
+        if (m_accountId.isEmpty() && !bestId.isEmpty()) {
+            bool ok = false;
+            quint64 sid = bestId.toULongLong(&ok);
+            if (ok) {
+                m_accountId = QString::number(sid & 0xFFFFFFFF);
+                m_accountName = bestName;
+            }
+        }
+        if (m_accountId.isEmpty() && !lastId.isEmpty()) {
+            bool ok = false;
+            quint64 sid = lastId.toULongLong(&ok);
+            if (ok) {
+                m_accountId = QString::number(sid & 0xFFFFFFFF);
+                m_accountName = lastName;
             }
         }
     }
@@ -176,7 +227,9 @@ void Backend::scanStorageForApps()
     QDir dir(accountDir);
     if (!dir.exists()) return;
 
-    static const QSet<QString> metadataFiles = {"cn.dat", "root_token.dat", "file_tokens.dat", "deleted.dat"};
+    static const QSet<QString> metadataFiles = {"cn.dat", "root_token.dat", "file_tokens.dat", "deleted.dat",
+        "cn.cloudredirect", "root_token.cloudredirect", "file_tokens.cloudredirect",
+        "state.cloudredirect", "deleted.cloudredirect"};
 
     QStringList appDirs = dir.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
     for (const auto &appIdStr : appDirs) {
@@ -186,13 +239,18 @@ void Backend::scanStorageForApps()
         if (kHiddenAppIds.contains(appId)) continue;
 
         QString appDir = accountDir + "/" + appIdStr;
-        
-        // Read save root from root_token.dat
+
+        // O hook atual grava root_token.cloudredirect; o .dat e legado.
         QString saveRoot;
-        QFile rootTokenFile(appDir + "/root_token.dat");
-        if (rootTokenFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
-            saveRoot = QString::fromUtf8(rootTokenFile.readAll()).trimmed();
-            rootTokenFile.close();
+        {
+            QFile legacy(appDir + "/root_token.dat");
+            if (legacy.open(QIODevice::ReadOnly | QIODevice::Text))
+                saveRoot = QString::fromUtf8(legacy.readAll()).trimmed();
+        }
+        if (saveRoot.isEmpty()) {
+            QFile cur(appDir + "/root_token.cloudredirect");
+            if (cur.open(QIODevice::ReadOnly | QIODevice::Text))
+                saveRoot = QString::fromUtf8(cur.readAll()).trimmed();
         }
         
         // Count files and compute size (skip metadata)
