@@ -52,6 +52,12 @@ static void InitSecretService() {
 #if defined(__i386__)
     LOG("[TokenStorage] Secret Service unavailable in 32-bit Steam process; using file fallback");
     return;
+#elif defined(__x86_64__)
+    // Every earlier Linux build was 32-bit and therefore file-only; loading the
+    // host's libsecret/glib into Steam's runtime process is untested. Keep the
+    // same 0600 file store so existing tokens and the CLI stay in agreement.
+    LOG("[TokenStorage] Using the file token store (parity with the 32-bit build)");
+    return;
 #endif
 
     g_libsecret = dlopen("libsecret-1.so.0", RTLD_NOW | RTLD_LOCAL);

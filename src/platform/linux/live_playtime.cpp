@@ -300,6 +300,14 @@ static bool ResolveVtableAndDescriptor(uintptr_t base, size_t size) {
 }
 
 bool Resolve(uintptr_t base, size_t size, ParseFromArrayFn parse) {
+#if defined(__x86_64__)
+    // The writer detour, message helpers and Response layout are i386-only
+    // (pushad trampolines, 32-bit wrapper words). Live UI refresh stays off on
+    // steamrt64; playtime still syncs and shows after Steam's next refresh.
+    (void)base; (void)size; (void)parse;
+    LOG("[Stats] LivePlaytime: not ported to the x86_64 client -- live UI updates disabled");
+    return false;
+#endif
     g_base = base;
     g_parseFromArray = parse;
 

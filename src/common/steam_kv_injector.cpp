@@ -675,6 +675,14 @@ void Configure(const ResolvedKvAddrs&) {}
 bool Init() {
     bool success = false;
     std::call_once(g_initOnce, [&]() {
+#if defined(__x86_64__)
+        // The signatures, struct offsets and BST layout below were reversed from
+        // the i386 client only. Leave the injector off on steamrt64 rather than
+        // call into a guessed address; callers fall back to the default quota
+        // and saves are unaffected.
+        LOG("[KvInjector] Init: not ported to the x86_64 client -- quota metadata injection disabled");
+        return;
+#endif
         FindSteamCtx ctx;
         dl_iterate_phdr(FindSteamPhdrCb, &ctx);
         if (!ctx.base) {
