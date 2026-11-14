@@ -153,17 +153,20 @@ static std::string GetProcessName()
     return buf;
 }
 
-// True in the host-side steamrt64/steam launcher (see OnLoad).
-static bool IsSteamrt64Launcher()
+static bool ExeEndsWith(const char* suffix)
 {
-    if (getenv("PRESSURE_VESSEL_RUNTIME")) return false;
     char exe[4096];
     ssize_t n = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
     if (n <= 0) return false;
     exe[n] = '\0';
-    static constexpr const char kSuffix[] = "/steamrt64/steam";
-    const size_t len = sizeof(kSuffix) - 1;
-    return (size_t)n >= len && strcmp(exe + n - len, kSuffix) == 0;
+    const size_t len = strlen(suffix);
+    return (size_t)n >= len && strcmp(exe + n - len, suffix) == 0;
+}
+
+// True in the host-side steamrt64/steam launcher (see OnLoad).
+static bool IsSteamrt64Launcher()
+{
+    return !getenv("PRESSURE_VESSEL_RUNTIME") && ExeEndsWith("/steamrt64/steam");
 }
 
 static void CleanLdPreload()
@@ -640,6 +643,10 @@ static void OnLoad()
 {
     std::string proc = GetProcessName();
     if (proc != "steam" && !SteamclientMapped())
+        return;
+    // The shell running steam.sh is also named "steam"; stripping LD_PRELOAD
+    // there would keep us out of every process it starts.
+    if (!SteamclientMapped() && !ExeEndsWith("/steam"))
         return;
 
     // The steamrt64 client is two processes: steam.sh starts steamrt64/steam on
