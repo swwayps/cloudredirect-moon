@@ -153,6 +153,22 @@ static std::string GetProcessName()
     return buf;
 }
 
+static bool ExeEndsWith(const char* suffix)
+{
+    char exe[4096];
+    ssize_t n = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
+    if (n <= 0) return false;
+    exe[n] = '\0';
+    const size_t len = strlen(suffix);
+    return (size_t)n >= len && strcmp(exe + n - len, suffix) == 0;
+}
+
+// True in the host-side steamrt64/steam launcher (see OnLoad).
+static bool IsSteamrt64Launcher()
+{
+    return !getenv("PRESSURE_VESSEL_RUNTIME") && ExeEndsWith("/steamrt64/steam");
+}
+
 static void CleanLdPreload()
 {
     char* preload = getenv("LD_PRELOAD");
@@ -628,6 +644,21 @@ static void OnLoad()
     std::string proc = GetProcessName();
     if (proc != "steam" && !SteamclientMapped())
         return;
+    // The shell running steam.sh is also named "steam"; stripping LD_PRELOAD
+    // there would keep us out of every process it starts.
+    if (!SteamclientMapped() && !ExeEndsWith("/steam"))
+        return;
+
+    // The steamrt64 client is two processes: steam.sh starts steamrt64/steam on
+    // the host, which re-launches itself inside the pressure-vessel container
+    // (PRESSURE_VESSEL_RUNTIME set there) and only that inner process maps
+    // steamclient.so. Stripping LD_PRELOAD in the outer launcher would keep us
+    // out of the real client, so leave the environment alone there and do not
+    // start an init thread that could only time out.
+    if (IsSteamrt64Launcher()) {
+        DebugLog("[CR] OnLoad: steamrt64 launcher, deferring to the containerised client\n");
+        return;
+    }
 
     // Clean ourselves from LD_PRELOAD so child processes don't inherit us
     CleanLdPreload();

@@ -35,7 +35,8 @@
 #include <chrono>
 #include <condition_variable>
 
-// 32-bit Linux cdecl: all args on stack
+// 32-bit Linux cdecl: all args on stack. On x86_64 the same prototypes use the
+// SysV register convention (slots 5/7/8 have these arities on steamrt64 too).
 using BYieldingSend_t     = int(*)(void* pThis, const char* method, void* req, void* resp, int* flags);
 using NotificationDirect_t = int(*)(void* pThis, const char* method, void* body, int* flags);
 using SyncSend2_t         = int(*)(void* pThis, const char* method, void* buf, unsigned int bufLen, void* resp, int* flags);
@@ -192,6 +193,52 @@ private:
 //   Then at +0x1d: test edx,edx      => 85 d2
 //   Then at +0x1f: jns short          => 79 xx
 
+#if defined(__x86_64__)
+// x86_64 (steamrt64 build 1794536281), MessageLite::SerializeWithCachedSizesToArray:
+//   48 83 EC 18          sub  rsp, 18h
+//   48 8B 07             mov  rax, [rdi]
+//   48 89 74 24 08       mov  [rsp+8], rsi
+//   48 89 3C 24          mov  [rsp], rdi
+//   FF 50 50             call [rax+50h]          ; GetCachedSize (slot 10, i386 [eax+28h])
+//   48 8B 74 24 08       mov  rsi, [rsp+8]
+//   48 8B 3C 24          mov  rdi, [rsp]
+//   48 83 C4 18          add  rsp, 18h
+//   89 C2                mov  edx, eax
+//   E9                   jmp  <serialize impl>
+static const uint8_t kSerializeSig[] = {
+    0x48,0x83,0xEC,0x18, 0x48,0x8B,0x07, 0x48,0x89,0x74,0x24,0x08, 0x48,0x89,0x3C,0x24,
+    0xFF,0x50,0x50, 0x48,0x8B,0x74,0x24,0x08, 0x48,0x8B,0x3C,0x24, 0x48,0x83,0xC4,0x18,
+    0x89,0xC2, 0xE9
+};
+
+// MessageLite::ParseFromArray(data, size): the StringPiece `len >= 0` check
+// (line 0xE5), Clear() through [rax+28h] (slot 5, i386 [edx+14h]), then a tail
+// call to the parser with mode 1 (kParse). Its twin with mode 3 is
+// ParsePartialFromArray, so the mode byte is part of the match.
+//   41 55 41 54 55 48 63 EA 48 85 ED 79 ??      push r13/r12/rbp; movsxd rbp,edx; test; jns
+//   48 8D 0D ?? ?? ?? ?? BA E5 00 00 00          lea rcx,[rip+..]; mov edx,0E5h
+//   48 8D 35 ?? ?? ?? ?? 48 8D 3D ?? ?? ?? ??    lea rsi/rdi,[rip+..]
+//   E8 ?? ?? ?? ??                               call <log fatal>
+//   48 8B 07 49 89 FC 49 89 F5 FF 50 28          mov rax,[rdi]; ...; call [rax+28h]
+//   4C 89 E2 4C 89 EF 48 89 EE B9 01 00 00 00    mov rdx,r12; mov rdi,r13; mov rsi,rbp; mov ecx,1
+static const uint8_t kParseSigX64[] = {
+    0x41,0x55,0x41,0x54,0x55,0x48,0x63,0xEA,0x48,0x85,0xED,0x79,0,
+    0x48,0x8D,0x0D,0,0,0,0, 0xBA,0xE5,0x00,0x00,0x00,
+    0x48,0x8D,0x35,0,0,0,0, 0x48,0x8D,0x3D,0,0,0,0,
+    0xE8,0,0,0,0,
+    0x48,0x8B,0x07,0x49,0x89,0xFC,0x49,0x89,0xF5,0xFF,0x50,0x28,
+    0x4C,0x89,0xE2,0x4C,0x89,0xEF,0x48,0x89,0xEE,0xB9,0x01,0x00,0x00,0x00
+};
+static const uint8_t kParseMaskX64[] = {
+    1,1,1,1,1,1,1,1,1,1,1,1,0,
+    1,1,1,0,0,0,0, 1,1,1,1,1,
+    1,1,1,0,0,0,0, 1,1,1,0,0,0,0,
+    1,0,0,0,0,
+    1,1,1,1,1,1,1,1,1,1,1,1,
+    1,1,1,1,1,1,1,1,1,1,1,1,1,1
+};
+static_assert(sizeof(kParseSigX64) == sizeof(kParseMaskX64), "parse mask length");
+#else
 static const uint8_t kSerializeSig[] = {
     0x55, 0x89, 0xE5, 0x53, 0x83, 0xEC, 0x10,
     0x8B, 0x5D, 0x08, 0x8B, 0x03, 0x53, 0xFF, 0x50, 0x28
@@ -207,6 +254,7 @@ static const uint8_t kParsePrologue[] = {
 static const uint8_t kParseArgLoads[] = {
     0x8B, 0x45, 0x08, 0x8B, 0x55, 0x10, 0x8B, 0x75, 0x0C, 0x85, 0xD2, 0x79
 };
+#endif
 
 static void* ScanForPattern(void* base, size_t size, const uint8_t* pattern, size_t patLen) {
     const uint8_t* p = (const uint8_t*)base;
@@ -227,6 +275,19 @@ bool CloudHooks::ResolveProtobufHelpers(void* steamclientBase, size_t steamclien
         LOG("[Hook] ERROR: SerializeToArray not found by signature");
     }
 
+#if defined(__x86_64__)
+    void* parseFound = nullptr;
+    if (steamclientSize >= sizeof(kParseSigX64)) {
+        const uint8_t* p = (const uint8_t*)steamclientBase;
+        const uint8_t* end = p + steamclientSize - sizeof(kParseSigX64);
+        for (; p <= end && !parseFound; ++p) {
+            bool ok = true;
+            for (size_t i = 0; i < sizeof(kParseSigX64); ++i)
+                if (kParseMaskX64[i] && p[i] != kParseSigX64[i]) { ok = false; break; }
+            if (ok) parseFound = (void*)p;
+        }
+    }
+#else
     // Find ParseFromArray by prologue + arg loads at offset +0x14
     if (steamclientSize < 0x30) {
         LOG("[Hook] ERROR: steamclient too small (%zu bytes) for signature scan", steamclientSize);
@@ -244,6 +305,7 @@ bool CloudHooks::ResolveProtobufHelpers(void* steamclientBase, size_t steamclien
             break;
         }
     }
+#endif
     if (parseFound) {
         g_parseFromArray = (ParseFromArray_t)parseFound;
         LOG("[Hook] Found ParseFromArray at %p", parseFound);
@@ -257,10 +319,10 @@ bool CloudHooks::ResolveProtobufHelpers(void* steamclientBase, size_t steamclien
 static std::vector<uint8_t> SerializeMessage(void* msg) {
     if (!msg || !g_serializeToArray) return {};
 
-    // vtable[9] = ByteSizeLong (offset +36 on 32-bit)
-    uint32_t* vtable = *(uint32_t**)msg;
+    // vtable[9] = ByteSizeLong (offset +36 on 32-bit, +72 on x86_64)
+    uintptr_t* vtable = *(uintptr_t**)msg;
     if (!vtable || !vtable[9]) return {};
-    using ByteSizeFn = int(__attribute__((cdecl)) *)(void*);
+    using ByteSizeFn = size_t (*)(void*);
     ProtoCrashGuard guard;
     int sig = sigsetjmp(g_protoJmpBuf, 1);
     if (sig != 0) {
@@ -268,8 +330,8 @@ static std::vector<uint8_t> SerializeMessage(void* msg) {
         return {};
     }
 
-    int size = ((ByteSizeFn)vtable[9])(msg);
-    if (size <= 0 || size > 64 * 1024 * 1024) return {};
+    size_t size = ((ByteSizeFn)vtable[9])(msg);
+    if (size == 0 || size > 64 * 1024 * 1024) return {};
 
     std::vector<uint8_t> buf(size);
     g_serializeToArray(msg, buf.data());

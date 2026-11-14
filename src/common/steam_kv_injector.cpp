@@ -374,7 +374,13 @@ bool InjectSaveFiles(uint32_t appId, const std::vector<SaveFileRule>& rules) {
 // Linux steamclient.so -- runtime signature scanning only (no hardcoded fallback RVAs)
 
 // Offset from CSteamEngine* to CAppInfoCache instance.
+#if defined(__x86_64__)
+// steamrt64: IsCloudEnabledForApp and EvaluateConfigChanges both pass
+// `lea rbp,[rax+13D8h]` (rax = the engine global) to the config readers.
+static constexpr uintptr_t APPINFOCACHE_OFFSET = 0x13D8;
+#else
 static constexpr uintptr_t APPINFOCACHE_OFFSET = 2952; // 0xB88
+#endif
 
 // Inline BST node layout (read off CAppInfoCache at offset 96, stride 24):
 //   +0   uint32   left child index
@@ -387,7 +393,12 @@ using ReadConfigU64Fn = uint64_t(*)(void* cache, uint32_t appId, uint32_t sectio
                                     const char* keyName, uint64_t defaultVal);
 using GetSectionFn   = void*(*)(void* appInfo, uint32_t sectionId);
 using KvFindKeyFn    = void*(*)(void* parent, const char* name, uint8_t bCreate, void* outArr);
+#if defined(__x86_64__)
+using KvSetUint64Fn  = void (*)(void* kv, uint64_t value);
+#else
+// cdecl: the uint64 argument occupies two stack words.
 using KvSetUint64Fn  = void (*)(void* kv, uint32_t lo, uint32_t hi);
+#endif
 using KvSetInt32Fn   = void (*)(void* kv, int32_t value);
 using KvSetStringFn  = void (*)(void* kv, const char* value);
 
@@ -458,7 +469,17 @@ struct FindSteamCtx {
     uintptr_t textStart = 0;
     uintptr_t textEnd = 0;
     uintptr_t moduleEnd = 0; // highest mapped VA across all PT_LOAD segments
+    // PT_LOAD ranges [start, start+memsz): the only addresses a decoded
+    // reference may be dereferenced at (the module has unmapped gaps).
+    MemRegion segs[8] = {};
+    int segCount = 0;
 };
+
+[[maybe_unused]] static bool InSegment(const FindSteamCtx& ctx, uintptr_t addr, size_t len) {
+    for (int i = 0; i < ctx.segCount; ++i)
+        if (addr >= ctx.segs[i].start && addr + len <= ctx.segs[i].end) return true;
+    return false;
+}
 
 static int FindSteamPhdrCb(struct dl_phdr_info* info, size_t, void* data) {
     if (!info || !info->dlpi_name) return 0;
@@ -477,6 +498,7 @@ static int FindSteamPhdrCb(struct dl_phdr_info* info, size_t, void* data) {
         uintptr_t segStart = info->dlpi_addr + ph.p_vaddr;
         uintptr_t segEnd = segStart + ph.p_memsz;
         if (segEnd > ctx->moduleEnd) ctx->moduleEnd = segEnd;
+        if (ctx->segCount < 8) ctx->segs[ctx->segCount++] = {segStart, segEnd};
         if ((ph.p_flags & PF_X) &&
             (segEnd - segStart) > (ctx->textEnd - ctx->textStart)) {
             ctx->textStart = segStart;
@@ -603,6 +625,201 @@ static uintptr_t FindGlobalEnginePtr(uintptr_t textStart, uintptr_t textEnd,
     return 0;
 }
 
+#if defined(__x86_64__)
+// ── x86_64 resolution (steamrt64 build 1794536281) ──────────────────────────
+//
+// ReadConfigU64(cache, appId, section, key, default) is the function Steam
+// calls right after loading the "quota" key (three sites, all one target).
+// Its body pins the app-info tree layout and leads to GetSection (first call)
+// and FindKey (second call: `xor ecx,ecx; xor edx,edx; jmp FindKey`).
+//   55 53 4C 89 C3 48 83 EC 08      push rbp/rbx; mov rbx,r8; sub rsp,8
+//   48 63 47 28 83 F8 FF 74 ??      movsxd rax,[rdi+28h]; cmp eax,-1; jz   ; root index
+//   48 8B 7F 40                     mov rdi,[rdi+40h]                      ; nodes
+//   41 89 D1 48 89 CD EB            mov r9d,edx; mov rbp,rcx; jmp
+// The int32 sibling ReadConfigInt starts `44 89 C3` and is never the target of
+// a "quota" load, so the vote below cannot pick it.
+static const uint8_t kSigReadConfigU64X64[] = {
+    0x55,0x53,0x4C,0x89,0xC3,0x48,0x83,0xEC,0x08, 0x48,0x63,0x47,0x28,0x83,0xF8,0xFF,0x74,0,
+    0x48,0x8B,0x7F,0x40, 0x41,0x89,0xD1,0x48,0x89,0xCD,0xEB
+};
+static const uint8_t kMaskReadConfigU64X64[] = {
+    1,1,1,1,1,1,1,1,1, 1,1,1,1,1,1,1,1,0,
+    1,1,1,1, 1,1,1,1,1,1,1
+};
+
+// KeyValues setters: if (kv) { ClearValue(kv); value = arg; type bits = T }.
+// The type lives in bits 1-4 of byte +0x13 (i386: +0x0B).
+static const uint8_t kSigKvSetInt32X64[] = {
+    0x48,0x85,0xFF,0x74,0, 0x55,0x89,0xF5,0x53,0x48,0x89,0xFB,0x48,0x83,0xEC,0x08,
+    0xE8,0,0,0,0, 0x0F,0xB6,0x43,0x13, 0x89,0x2B, 0x83,0xE0,0xE1,0x83,0xC8,0x04,0x88,0x43,0x13
+};
+static const uint8_t kMaskKvSetInt32X64[] = {
+    1,1,1,1,0, 1,1,1,1,1,1,1,1,1,1,1,
+    1,0,0,0,0, 1,1,1,1, 1,1, 1,1,1,1,1,1,1,1,1
+};
+static const uint8_t kSigKvSetUint64X64[] = {
+    0x48,0x85,0xFF,0x74,0, 0x55,0x48,0x89,0xF5,0x53,0x48,0x89,0xFB,0x48,0x83,0xEC,0x08,
+    0xE8,0,0,0,0, 0x0F,0xB6,0x43,0x13, 0x48,0x89,0x2B, 0x83,0xE0,0xE1,0x83,0xC8,0x0E,0x88,0x43,0x13
+};
+static const uint8_t kMaskKvSetUint64X64[] = {
+    1,1,1,1,0, 1,1,1,1,1,1,1,1,1,1,1,1,
+    1,0,0,0,0, 1,1,1,1, 1,1,1, 1,1,1,1,1,1,1,1,1
+};
+// SetString(kv, const char*): same guard and ClearValue call; its string-type
+// tail (and eax,0E1h; or eax,2; mov [rbx+13h],al) is checked separately.
+static const uint8_t kSigKvSetStringX64[] = {
+    0x48,0x85,0xFF,0x74,0, 0x41,0x54,0x55,0x48,0x89,0xF5,0x53,0x48,0x89,0xFB,
+    0xE8,0,0,0,0, 0x48,0x85,0xED,0x74,0, 0x48,0x89,0xEF,0xE8
+};
+static const uint8_t kMaskKvSetStringX64[] = {
+    1,1,1,1,0, 1,1,1,1,1,1,1,1,1,1,
+    1,0,0,0,0, 1,1,1,1,0, 1,1,1,1
+};
+static_assert(sizeof(kSigReadConfigU64X64) == sizeof(kMaskReadConfigU64X64), "mask");
+static_assert(sizeof(kSigKvSetInt32X64) == sizeof(kMaskKvSetInt32X64), "mask");
+static_assert(sizeof(kSigKvSetUint64X64) == sizeof(kMaskKvSetUint64X64), "mask");
+static_assert(sizeof(kSigKvSetStringX64) == sizeof(kMaskKvSetStringX64), "mask");
+
+static bool MatchAt(uintptr_t addr, const uint8_t* sig, const uint8_t* mask, size_t len) {
+    const uint8_t* p = reinterpret_cast<const uint8_t*>(addr);
+    for (size_t i = 0; i < len; ++i)
+        if (mask[i] && p[i] != sig[i]) return false;
+    return true;
+}
+
+// `lea r64,[rip+disp32]` (REX.W 8D /r, mod=00 rm=101): its target, or 0.
+static uintptr_t DecodeLeaRip(uintptr_t addr) {
+    const uint8_t* p = reinterpret_cast<const uint8_t*>(addr);
+    if ((p[0] != 0x48 && p[0] != 0x4C) || p[1] != 0x8D || (p[2] & 0xC7) != 0x05) return 0;
+    int32_t disp;
+    memcpy(&disp, p + 3, sizeof(disp));
+    return addr + 7 + (intptr_t)disp;
+}
+
+// The address with the most votes, or 0 when it has fewer than minVotes or
+// another candidate ties it.
+struct Vote { uintptr_t addr; int count; };
+static uintptr_t Winner(const Vote* votes, int n, int minVotes) {
+    int best = -1, second = 0;
+    for (int i = 0; i < n; ++i) {
+        if (best < 0 || votes[i].count > votes[best].count) {
+            if (best >= 0) second = votes[best].count;
+            best = i;
+        } else if (votes[i].count > second) {
+            second = votes[i].count;
+        }
+    }
+    if (best < 0 || votes[best].count < minVotes || votes[best].count == second) return 0;
+    return votes[best].addr;
+}
+
+static void AddVote(Vote* votes, int& n, int cap, uintptr_t addr) {
+    for (int i = 0; i < n; ++i)
+        if (votes[i].addr == addr) { ++votes[i].count; return; }
+    if (n < cap) votes[n++] = {addr, 1};
+}
+
+static bool ResolveX64(const FindSteamCtx& ctx, Resolved& out) {
+    const uintptr_t lo = ctx.textStart, hi = ctx.textEnd;
+    Vote readVotes[16]; int readN = 0;
+    Vote engVotes[16];  int engN = 0;
+
+    for (uintptr_t a = lo; a + 32 <= hi; ++a) {
+        const uint8_t* p = reinterpret_cast<const uint8_t*>(a);
+        if ((p[0] != 0x48 && p[0] != 0x4C) || p[1] != 0x8D) continue;
+
+        // lea rcx,[rip+"quota"] ... call ReadConfigU64
+        if ((p[2] & 0xC7) == 0x05) {
+            const uintptr_t t = DecodeLeaRip(a);
+            if (InSegment(ctx, t, 6) && memcmp(reinterpret_cast<const void*>(t), "quota", 6) == 0) {
+                for (size_t k = 7; k < 27; ++k) {
+                    if (p[k] != 0xE8) continue;
+                    const uintptr_t c = DecodeRelCall(a + k);
+                    if (c >= lo && c < hi) AddVote(readVotes, readN, 16, c);
+                    break;
+                }
+            }
+            continue;
+        }
+        // lea reg,[rax+13D8h] preceded by lea reg2,[rip+engine global]
+        if ((p[2] & 0xC7) == 0x80 && p[3] == 0xD8 && p[4] == 0x13 && p[5] == 0 && p[6] == 0) {
+            for (size_t back = 4; back <= 16 && a - back >= lo; ++back) {
+                const uintptr_t g = DecodeLeaRip(a - back);
+                if (g && InSegment(ctx, g, sizeof(void*))) { AddVote(engVotes, engN, 16, g); break; }
+            }
+        }
+    }
+
+    const uintptr_t readCfg = Winner(readVotes, readN, 2);
+    const uintptr_t engine  = Winner(engVotes, engN, 3);
+    if (!readCfg || !MatchAt(readCfg, kSigReadConfigU64X64, kMaskReadConfigU64X64,
+                             sizeof(kSigReadConfigU64X64))) {
+        LOG("[KvInjector] x86_64: ReadConfigU64 not resolved (candidates=%d)", readN);
+        return false;
+    }
+    if (!engine) {
+        LOG("[KvInjector] x86_64: engine global not resolved (candidates=%d)", engN);
+        return false;
+    }
+
+    // GetSection = first call in ReadConfigU64, FindKey = the jmp inside the
+    // wrapper the second call reaches.
+    uintptr_t getSect = 0, kvFind = 0;
+    for (uintptr_t a = readCfg; a < readCfg + 0x120 && a + 5 <= hi; ++a) {
+        if (*reinterpret_cast<const uint8_t*>(a) != 0xE8) continue;
+        const uintptr_t c = DecodeRelCall(a);
+        if (c < lo || c >= hi) continue;
+        if (!getSect) { getSect = c; a += 4; continue; }
+        const uint8_t* w = reinterpret_cast<const uint8_t*>(c);
+        if (w[0] == 0x31 && w[1] == 0xC9 && w[2] == 0x31 && w[3] == 0xD2 && w[4] == 0xE9) {
+            int32_t rel;
+            memcpy(&rel, w + 5, sizeof(rel));
+            const uintptr_t f = c + 9 + (intptr_t)rel;
+            if (f >= lo && f < hi) kvFind = f;
+        }
+        break;
+    }
+
+    const uintptr_t setI32 = ScanPattern(lo, hi, kSigKvSetInt32X64, kMaskKvSetInt32X64,
+                                         sizeof(kSigKvSetInt32X64));
+    const uintptr_t setU64 = ScanPattern(lo, hi, kSigKvSetUint64X64, kMaskKvSetUint64X64,
+                                         sizeof(kSigKvSetUint64X64));
+    uintptr_t setStr = ScanPattern(lo, hi, kSigKvSetStringX64, kMaskKvSetStringX64,
+                                   sizeof(kSigKvSetStringX64));
+    if (setStr) {
+        static const uint8_t kStrType[] = {0x83, 0xE0, 0xE1, 0x83, 0xC8, 0x02, 0x88, 0x43, 0x13};
+        bool tail = false;
+        for (uintptr_t a = setStr; a < setStr + 0xA0 && a + sizeof(kStrType) <= hi; ++a)
+            if (memcmp(reinterpret_cast<const void*>(a), kStrType, sizeof(kStrType)) == 0) { tail = true; break; }
+        if (!tail) setStr = 0;
+    }
+
+    auto rva = [&](uintptr_t a) { return (unsigned long)(a ? a - ctx.base : 0); };
+    LOG("[KvInjector] x86_64: readCfg=+0x%lx engine=+0x%lx getSect=+0x%lx kvFind=+0x%lx "
+        "setI32=+0x%lx setU64=+0x%lx setStr=+0x%lx",
+        rva(readCfg), rva(engine), rva(getSect), rva(kvFind), rva(setI32), rva(setU64), rva(setStr));
+    if (!getSect || !kvFind || !setI32 || !setU64 || !setStr) return false;
+
+    out.globalEnginePtr = reinterpret_cast<void**>(engine);
+    out.readConfigU64   = reinterpret_cast<ReadConfigU64Fn>(readCfg);
+    out.getSection      = reinterpret_cast<GetSectionFn>(getSect);
+    out.kvFindKey       = reinterpret_cast<KvFindKeyFn>(kvFind);
+    out.kvSetUint64     = reinterpret_cast<KvSetUint64Fn>(setU64);
+    out.kvSetInt32      = reinterpret_cast<KvSetInt32Fn>(setI32);
+    out.kvSetString     = reinterpret_cast<KvSetStringFn>(setStr);
+    return true;
+}
+#endif
+
+static void KvSetU64(void* kv, uint64_t value) {
+#if defined(__x86_64__)
+    g_r.kvSetUint64(kv, value);
+#else
+    g_r.kvSetUint64(kv, static_cast<uint32_t>(value & 0xFFFFFFFFu),
+                    static_cast<uint32_t>(value >> 32));
+#endif
+}
+
 static void* GetCachePtr() {
     if (!g_r.globalEnginePtr) return nullptr;
     void* engine = *g_r.globalEnginePtr;
@@ -687,6 +904,18 @@ bool Init() {
             (unsigned long)ctx.textStart, (unsigned long)ctx.textEnd,
             (unsigned long)((ctx.textEnd - ctx.textStart) / (1024*1024)));
 
+#if defined(__x86_64__)
+        if (!ResolveX64(ctx, g_r)) {
+            g_r = Resolved{};
+            LOG("[KvInjector] x86_64: resolution incomplete -- DISABLED");
+            return;
+        }
+        LOG("[KvInjector] Init: resolved x86_64 pointers (engine global @ %p)",
+            g_r.globalEnginePtr);
+        g_ready.store(true, std::memory_order_release);
+        success = true;
+        return;
+#endif
         bool usedSigs = false;
 
         uintptr_t readCfg = ScanPattern(ctx.textStart, ctx.textEnd,
@@ -858,6 +1087,27 @@ bool ReadAppQuota(uint32_t appId, uint64_t& outQuotaBytes, uint32_t& outMaxNumFi
 // node+16=appId, node+20=appInfo. Returns null if appId not in cache.
 static void* ResolveAppInfo(void* cache, uint32_t appId) {
     if (!cache) return nullptr;
+#if defined(__x86_64__)
+    // Same walk ReadConfigU64 does: root index at +0x28, nodes at +0x40
+    // (32-byte stride: left/right index +0/+4, appId +0x10, appInfo +0x18).
+    // An entry flagged at +0x14 is one Steam itself refuses to read.
+    uint8_t* c = static_cast<uint8_t*>(cache);
+    int32_t idx = *reinterpret_cast<int32_t*>(c + 0x28);
+    uint8_t* nodes = *reinterpret_cast<uint8_t**>(c + 0x40);
+    if (idx < 0 || !nodes) return nullptr;
+    while (idx >= 0) {
+        uint8_t* node = nodes + static_cast<size_t>(idx) * 0x20;
+        uint32_t key = *reinterpret_cast<uint32_t*>(node + 0x10);
+        if (appId < key) idx = *reinterpret_cast<int32_t*>(node + 0);
+        else if (appId > key) idx = *reinterpret_cast<int32_t*>(node + 4);
+        else {
+            uint8_t* info = *reinterpret_cast<uint8_t**>(node + 0x18);
+            if (!info || info[0x14] != 0) return nullptr;
+            return info;
+        }
+    }
+    return nullptr;
+#else
     uint8_t* cacheBytes = static_cast<uint8_t*>(cache);
     int32_t  rootIdx = *reinterpret_cast<int32_t*>(cacheBytes + 76);
     uint8_t* nodes   = *reinterpret_cast<uint8_t**>(cacheBytes + 96);
@@ -876,6 +1126,7 @@ static void* ResolveAppInfo(void* cache, uint32_t appId) {
         }
     }
     return nullptr;
+#endif
 }
 
 bool InjectAppQuota(uint32_t appId, uint64_t quotaBytes, uint32_t maxNumFiles) {
@@ -938,9 +1189,7 @@ bool InjectAppQuota(uint32_t appId, uint64_t quotaBytes, uint32_t maxNumFiles) {
     if (quotaNeedsWrite) {
         void* quotaKv = g_r.kvFindKey(ufs, "quota", 1, nullptr);
         if (quotaKv) {
-            uint32_t lo = static_cast<uint32_t>(quotaBytes & 0xFFFFFFFFu);
-            uint32_t hi = static_cast<uint32_t>((quotaBytes >> 32) & 0xFFFFFFFFu);
-            g_r.kvSetUint64(quotaKv, lo, hi);
+            KvSetU64(quotaKv, quotaBytes);
             wroteQuota = true;
         }
     }
@@ -997,9 +1246,7 @@ bool EnsureMaxNumFilesFloor(uint32_t appId, uint32_t floorFiles, uint64_t floorB
     if (floorBytes > 0 && curQuota < floorBytes) {
         void* quotaKv = g_r.kvFindKey(ufs, "quota", 1, nullptr);
         if (quotaKv) {
-            uint32_t lo = static_cast<uint32_t>(floorBytes & 0xFFFFFFFFu);
-            uint32_t hi = static_cast<uint32_t>((floorBytes >> 32) & 0xFFFFFFFFu);
-            g_r.kvSetUint64(quotaKv, lo, hi);
+            KvSetU64(quotaKv, floorBytes);
             wrote = true;
             LOG("[KvInjector] EnsureMaxNumFilesFloor app=%u: raised quota %llu -> %llu",
                 appId, (unsigned long long)curQuota, (unsigned long long)floorBytes);

@@ -46,7 +46,7 @@ static constexpr size_t WRAP_INNER_SLOT      = 8;   // wrapper[8] = m_pProtoBufB
 static constexpr size_t WRAP_DWORDS          = 12;  // wrapper allocation (msg ctor writes up to +0x1C)
 
 // Captured CUser pointer (recorded by the writer-entry detour).
-static std::atomic<int> g_pUser{0};
+static std::atomic<uintptr_t> g_pUser{0};
 
 // Signature scan; PIC call/add displacements are wildcarded.
 struct Sig { const uint8_t* bytes; const uint8_t* mask; size_t len; };
@@ -130,10 +130,10 @@ static size_t   g_savedLen = 0;
 static uint8_t* g_trampoline = nullptr;
 
 // Recorded on the writer's natural entry. ebp+8 = a1 = CUser.
-extern "C" void LivePlaytime_CaptureUser(int pUser) {
+extern "C" void LivePlaytime_CaptureUser(uintptr_t pUser) {
     if (pUser && !g_pUser.load(std::memory_order_acquire)) {
         g_pUser.store(pUser, std::memory_order_release);
-        LOG("[Stats] Captured CUser=%p for live playtime updates", (void*)(uintptr_t)pUser);
+        LOG("[Stats] Captured CUser=%p for live playtime updates", (void*)pUser);
     }
 }
 
@@ -182,6 +182,195 @@ static bool BuildTrampoline(uint8_t* hookPoint) {
     return true;
 }
 
+#if defined(__x86_64__)
+// ── x86_64 (steamrt64 build 1794536281) ─────────────────────────────────────
+// Steam's GetLastPlayedTimes request (sub_1913290) builds the response
+// CProtoBufMsg on the stack and hands its games to the writer:
+//   41 56 4C 8D 35 <vptr>             push r14; lea r14,[rip+wrapper vptr]
+//   ... 0F 16 0D <desc slot>          movhps xmm1,[rip+slot]  -> wrapper[1]
+//   call ctor; call init (request), call ctor; call init (response)
+//   48 8B 70 20 8B 50 18 48 8D 46 08  mov rsi,[inner+20h]; mov edx,[inner+18h]; lea rax,[rsi+8]
+//   48 85 F6 48 0F 45 F0 E8 <writer>  test; cmovnz; call writer(CUser, games, count)
+//   ... call dtor (response); call dtor (request)
+// The inner body sits at wrapper+0x38.
+static const uint8_t kWriterCallX64[] = {
+    0x48,0x8B,0x70,0x20, 0x8B,0x50,0x18, 0x48,0x8D,0x46,0x08, 0x48,0x85,0xF6, 0x48,0x0F,0x45,0xF0, 0xE8
+};
+static const uint8_t kAllOnes[sizeof(kWriterCallX64)] = {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1};
+// Writer prologue: push r15/r14/r13/r12/rbp/rbx; sub rsp,38h -- 14 bytes, no
+// RIP-relative operands, so they run unchanged in the trampoline.
+static const uint8_t kWriterPrologueX64[] = {
+    0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x55,0x53,0x48,0x83,0xEC,0x38
+};
+static constexpr size_t X64_STOLEN = sizeof(kWriterPrologueX64);
+static constexpr size_t X64_INNER_OFF = 0x38;
+static constexpr size_t X64_RESP_COUNT = 0x18;
+static constexpr size_t X64_RESP_GAMES = 0x20;
+
+using WriterFn64  = uint32_t (*)(void* pUser, void* games, int count);
+using MsgCtorFn64 = void (*)(void* self, int a2, int a3);
+using MsgFn64     = void (*)(void* self);
+static MsgCtorFn64 g_ctor64 = nullptr;
+static MsgFn64     g_init64 = nullptr;
+static MsgFn64     g_dtor64 = nullptr;
+
+static uintptr_t Rel32(uintptr_t insnEnd, const uint8_t* disp) {
+    int32_t d;
+    memcpy(&d, disp, 4);
+    return insnEnd + (intptr_t)d;
+}
+
+bool Resolve(uintptr_t base, size_t size, ParseFromArrayFn parse) {
+    g_base = base;
+    g_parseFromArray = parse;
+    const uintptr_t end = base + size;
+    auto inText = [&](uintptr_t a) { return a >= base && a < end; };
+
+    auto* anchor = (const uint8_t*)ScanSig(base, size, kWriterCallX64, kAllOnes, sizeof(kWriterCallX64));
+    if (!anchor) {
+        LOG("[Stats] LivePlaytime: x86_64 writer call site not found -- live UI updates disabled");
+        return false;
+    }
+    const uintptr_t callEnd = (uintptr_t)anchor + sizeof(kWriterCallX64) + 4;
+    const uintptr_t writer = Rel32(callEnd, anchor + sizeof(kWriterCallX64));
+    if (!inText(writer) || memcmp((void*)writer, kWriterPrologueX64, X64_STOLEN) != 0) {
+        LOG("[Stats] LivePlaytime: x86_64 writer prologue mismatch -- live UI updates disabled");
+        return false;
+    }
+
+    // Request function start: push r14; lea r14,[rip+vptr].
+    const uint8_t* fn = nullptr;
+    for (const uint8_t* q = anchor; q > anchor - 0x100; --q)
+        if (q[0] == 0x41 && q[1] == 0x56 && q[2] == 0x4C && q[3] == 0x8D && q[4] == 0x35) { fn = q; break; }
+    if (!fn) {
+        LOG("[Stats] LivePlaytime: x86_64 request function start not found");
+        return false;
+    }
+    const uintptr_t vptr = Rel32((uintptr_t)fn + 9, fn + 5);
+
+    // wrapper[1] comes from movhps xmm1,[rip+slot]; ctor/init are called as
+    // pairs (request, then response) between the prologue and the anchor.
+    uintptr_t desc = 0;
+    uintptr_t calls[8]; int nc = 0;
+    for (const uint8_t* q = fn + 9; q < anchor; ++q) {
+        if (!desc && q[0] == 0x0F && q[1] == 0x16 && q[2] == 0x0D)
+            desc = *(const uintptr_t*)Rel32((uintptr_t)q + 7, q + 3);
+        if (q[0] == 0xE8 && nc < 8) {
+            const uintptr_t t = Rel32((uintptr_t)q + 5, q + 1);
+            if (inText(t)) { calls[nc++] = t; q += 4; }
+        }
+    }
+    // Two dtor calls follow the writer (the first call after it is the
+    // registry write).
+    uintptr_t after[4]; int na = 0;
+    for (const uint8_t* q = (const uint8_t*)callEnd; q < (const uint8_t*)callEnd + 0x50 && na < 4; ++q) {
+        if (q[0] != 0xE8) continue;
+        const uintptr_t t = Rel32((uintptr_t)q + 5, q + 1);
+        if (inText(t)) { after[na++] = t; q += 4; }
+    }
+    if (nc < 4 || calls[0] != calls[2] || calls[1] != calls[3] || calls[0] == calls[1] ||
+        na < 3 || after[1] != after[2] || !desc) {
+        LOG("[Stats] LivePlaytime: x86_64 message helpers not resolved (calls=%d after=%d desc=%p)",
+            nc, na, (void*)desc);
+        return false;
+    }
+
+    g_writerStart = (uint8_t*)writer;
+    g_respWrapperVt = vptr;
+    g_respDescriptor = desc;
+    g_ctor64 = (MsgCtorFn64)calls[0];
+    g_init64 = (MsgFn64)calls[1];
+    g_dtor64 = (MsgFn64)after[1];
+    LOG("[Stats] LivePlaytime resolved (x86_64): writer=+0x%lx ctor=+0x%lx init=+0x%lx dtor=+0x%lx vptr=+0x%lx",
+        (unsigned long)(writer - base), (unsigned long)(calls[0] - base), (unsigned long)(calls[1] - base),
+        (unsigned long)(after[1] - base), (unsigned long)(vptr - base));
+    return true;
+}
+
+// Trampoline: save the argument registers, CaptureUser(rdi = CUser), restore,
+// run the stolen prologue, jump back to writer+14.
+static bool BuildTrampoline64() {
+    long ps = sysconf(_SC_PAGESIZE);
+    g_trampoline = (uint8_t*)mmap(nullptr, ps, PROT_READ | PROT_WRITE | PROT_EXEC,
+                                  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (g_trampoline == MAP_FAILED) { g_trampoline = nullptr; return false; }
+    uint8_t* p = g_trampoline;
+    auto emit = [&](std::initializer_list<uint8_t> b) { for (uint8_t x : b) *p++ = x; };
+    auto emit64 = [&](uint64_t v) { memcpy(p, &v, 8); p += 8; };
+    // 9 pushes: rsp is 8 mod 16 on entry, 0 mod 16 at the call.
+    emit({0x57, 0x56, 0x52, 0x51, 0x41,0x50, 0x41,0x51, 0x50, 0x41,0x52, 0x41,0x53});
+    emit({0x48, 0xB8}); emit64((uint64_t)(uintptr_t)&LivePlaytime_CaptureUser); // mov rax, imm64
+    emit({0xFF, 0xD0});                                                         // call rax
+    emit({0x41,0x5B, 0x41,0x5A, 0x58, 0x41,0x59, 0x41,0x58, 0x59, 0x5A, 0x5E, 0x5F});
+    memcpy(p, kWriterPrologueX64, X64_STOLEN); p += X64_STOLEN;
+    emit({0xFF, 0x25, 0, 0, 0, 0}); emit64((uint64_t)(uintptr_t)(g_writerStart + X64_STOLEN));
+    return true;
+}
+
+bool InstallUserCapture() {
+    if (!g_writerStart) return false;
+    bool expected = false;
+    if (!g_captureInstalled.compare_exchange_strong(expected, true)) return true;
+    g_hookPoint = g_writerStart;
+    g_savedLen = X64_STOLEN;
+    memcpy(g_savedBytes, g_hookPoint, g_savedLen);
+    if (!BuildTrampoline64() || !MakeWritable(g_hookPoint, g_savedLen)) {
+        g_captureInstalled.store(false);
+        return false;
+    }
+    uint8_t patch[X64_STOLEN] = {0xFF, 0x25, 0, 0, 0, 0};
+    const uint64_t tramp = (uint64_t)(uintptr_t)g_trampoline;
+    memcpy(patch + 6, &tramp, 8);
+    memcpy(g_hookPoint, patch, X64_STOLEN);
+    __builtin___clear_cache((char*)g_hookPoint, (char*)g_hookPoint + g_savedLen);
+    LOG("[Stats] LivePlaytime CUser-capture detour installed at %p", g_hookPoint);
+    return true;
+}
+
+bool Ready() {
+    return g_ctor64 && g_init64 && g_dtor64 && g_parseFromArray &&
+           g_pUser.load(std::memory_order_acquire) != 0;
+}
+
+void Apply(const std::vector<uint8_t>& respBody) {
+    if (respBody.empty() || !Ready()) return;
+    const auto eligible = StatsEligibility::FilterLastPlayed(respBody);
+    if (eligible.empty()) return;
+    void* pUser = (void*)g_pUser.load(std::memory_order_acquire);
+
+    alignas(16) uint64_t wrapper[12] = {0}; // Steam reserves 0x58 bytes
+    CallGuard guard;
+    if (sigsetjmp(g_jmp, 1) != 0) {
+        LOG("[Stats] LivePlaytime::Apply crashed in steamclient call -- skipped");
+        return;
+    }
+    g_ctor64(wrapper, 0, 0);
+    wrapper[0] = g_respWrapperVt;
+    wrapper[1] = g_respDescriptor;
+    g_init64(wrapper);
+
+    uint8_t* inner = (uint8_t*)wrapper[X64_INNER_OFF / 8];
+    if (!inner) {
+        LOG("[Stats] LivePlaytime::Apply: inner body alloc failed");
+        return;
+    }
+    if (g_parseFromArray(inner, eligible.data(), (int)eligible.size())) {
+        uint8_t* rep = *(uint8_t**)(inner + X64_RESP_GAMES);
+        int count = *(int*)(inner + X64_RESP_COUNT);
+        if (rep && count > 0) {
+            ((WriterFn64)g_writerStart)(pUser, rep + 8, count);
+            LOG("[Stats] LivePlaytime::Apply: pushed %d game(s) to live client map", count);
+        } else {
+            LOG("[Stats] LivePlaytime::Apply: no games parsed (count=%d)", count);
+        }
+    } else {
+        LOG("[Stats] LivePlaytime::Apply: ParseFromArray failed (%zu bytes)", respBody.size());
+    }
+    wrapper[0] = g_respWrapperVt;
+    g_dtor64(wrapper);
+}
+
+#else
 // Resolve vtable and descriptor from RTTI + code analysis (survives Steam updates).
 // 1. Find RTTI typestring for CProtoBufMsg<...Response> in .rodata
 // 2. Scan .data.rel.ro for typeinfo (ptr to typestring at offset +4)
@@ -354,6 +543,8 @@ bool InstallUserCapture() {
     return true;
 }
 
+#endif
+
 void RemoveUserCapture() {
     if (!g_captureInstalled.load(std::memory_order_acquire)) return;
     if (g_hookPoint && MakeWritable(g_hookPoint, g_savedLen)) {
@@ -363,6 +554,7 @@ void RemoveUserCapture() {
     g_captureInstalled.store(false, std::memory_order_release);
 }
 
+#if !defined(__x86_64__)
 bool Ready() {
     return g_msgCtor && g_msgInit && g_msgDtor && g_parseFromArray &&
            g_pUser.load(std::memory_order_acquire) != 0;
@@ -372,7 +564,7 @@ void Apply(const std::vector<uint8_t>& respBody) {
     if (respBody.empty() || !Ready()) return;
     const auto eligible = StatsEligibility::FilterLastPlayed(respBody);
     if (eligible.empty()) return;
-    int pUser = g_pUser.load(std::memory_order_acquire);
+    int pUser = (int)g_pUser.load(std::memory_order_acquire);
 
     // CProtoBufMsg<CPlayer_GetLastPlayedTimes_Response> on the stack (sub_182F8A0):
     // ctor zeroes it, [0]=typed vtable, [1]=descriptor, init allocates the inner
@@ -417,6 +609,7 @@ void Apply(const std::vector<uint8_t>& respBody) {
 
     g_msgDtor((int)(uintptr_t)wrapper);
 }
+#endif
 
 // ── Net-thread-safe queue ──────────────────────────────────────────────────
 static std::queue<std::vector<uint8_t>> g_queue;

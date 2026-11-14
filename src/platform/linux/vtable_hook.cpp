@@ -512,6 +512,32 @@ static bool IsWithinSteamclient(uintptr_t ptr, uintptr_t steamBase, size_t steam
     return ptr >= steamBase && ptr < steamBase + steamSize;
 }
 
+#if defined(__x86_64__)
+// True when the first `scan` bytes at `code` hold a `lea r64,[rip+disp32]`
+// (REX.W 8D /r, mod=00 rm=101) whose target is the NUL-terminated `text`.
+static bool FunctionLoadsString(const uint8_t* code, size_t scan, const char* text,
+                                uintptr_t steamBase, size_t steamSize)
+{
+    if (!CanReadMemory(code, scan + 7)) return false;
+    const size_t len = strlen(text) + 1;
+    for (size_t i = 0; i + 7 <= scan; ++i)
+    {
+        if ((code[i] != 0x48 && code[i] != 0x4C) || code[i + 1] != 0x8D ||
+            (code[i + 2] & 0xC7) != 0x05)
+            continue;
+        int32_t disp;
+        memcpy(&disp, code + i + 3, sizeof(disp));
+        const uintptr_t target = reinterpret_cast<uintptr_t>(code + i + 7) + (intptr_t)disp;
+        if (!IsWithinSteamclient(target, steamBase, steamSize) ||
+            !CanReadMemory(reinterpret_cast<const void*>(target), len))
+            continue;
+        if (memcmp(reinterpret_cast<const void*>(target), text, len) == 0)
+            return true;
+    }
+    return false;
+}
+#endif
+
 static bool IsLikelyAppCloudEnabledSlot(void** vtable, size_t slotIndex, uintptr_t steamBase, size_t steamSize)
 {
     uintptr_t fn = reinterpret_cast<uintptr_t>(vtable[slotIndex]);
@@ -520,6 +546,14 @@ static bool IsLikelyAppCloudEnabledSlot(void** vtable, size_t slotIndex, uintptr
 
     const uint8_t* p = reinterpret_cast<const uint8_t*>(fn);
 
+#if defined(__x86_64__)
+    // x86_64: the prologue carries no PIC thunk to anchor on, so identify the
+    // method by what it reads. IsCloudEnabledForApp (slot 24 on steamrt64 build
+    // 1794536281) checks the per-app cloud toggle map, then the app's
+    // "ignoreexternalfiles" and "hidecloudui" UFS keys; no other slot loads both.
+    return FunctionLoadsString(p, 0x200, "ignoreexternalfiles", steamBase, steamSize) &&
+           FunctionLoadsString(p, 0x200, "hidecloudui", steamBase, steamSize);
+#else
     // Pattern A (older builds): args passed via esp offsets
     //   +0:  55 57 56 53 E8 ?? ?? ?? ??  (push ebp/edi/esi/ebx + call PIC thunk)
     //   +9:  81 C3 ?? ?? ?? ??          (add ebx, imm32)
@@ -550,6 +584,7 @@ static bool IsLikelyAppCloudEnabledSlot(void** vtable, size_t slotIndex, uintptr
         return true;
 
     return false;
+#endif
 }
 
 static size_t ResolveCloudEnabledSlot(void** vtable, uintptr_t steamBase, size_t steamSize)
