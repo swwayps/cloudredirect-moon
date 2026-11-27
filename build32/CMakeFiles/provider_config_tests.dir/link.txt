@@ -1,0 +1,1 @@
+/usr/bin/g++-12 -O3 -DNDEBUG -m32 CMakeFiles/provider_config_tests.dir/test/provider_config_tests.cpp.o -o provider_config_tests  -Wl,-rpath,/build/build32 cloud_redirect32.so 

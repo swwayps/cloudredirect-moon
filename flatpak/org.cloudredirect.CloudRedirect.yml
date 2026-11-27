@@ -26,8 +26,8 @@ finish-args:
   - --talk-name=org.freedesktop.Flatpak
 
 modules:
-  # The cloud_redirect.so (32-bit) is for Steam hooking via LD_AUDIT.
-  # Steam is 32-bit, so the .so must be 32-bit to be loaded.
+  # The cloud_redirect.so (64-bit) is for Steam hooking via LD_PRELOAD.
+  # SLSsteam's Linux client runs as a 64-bit process.
   # The UI app copies it to ~/.local/share/SLSsteam/ during deployment.
   - name: cloud-redirect-native
     buildsystem: simple
@@ -38,7 +38,7 @@ modules:
     sources:
       - type: file
         path: cloud_redirect.so
-      # 32-bit CLI for the Migration page
+      # CLI matching the 64-bit native hook
       - type: file
         path: cloud_redirect_cli
       - type: file
@@ -62,9 +62,9 @@ modules:
         cat > /app/bin/cloud-redirect-ui-wrapper <<'EOF'
         #!/bin/bash
         # Path to bundled native binary for the deployer
-        # 32-bit .so for Steam hooking (deployed to ~/.local/share/SLSsteam/)
+        # 64-bit .so for Steam hooking (deployed to ~/.local/share/SLSsteam/)
         export CR_BUNDLED_SO="/app/share/cloud_redirect/cloud_redirect.so"
-        # 32-bit CLI for cloud-provider migration (deployed alongside the .so).
+        # 64-bit CLI for cloud-provider migration (deployed alongside the .so).
         export CR_BUNDLED_CLI="/app/share/cloud_redirect/cloud_redirect_cli"
         exec /app/bin/cloud-redirect-ui "$@"
         EOF

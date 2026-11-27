@@ -1,0 +1,1 @@
+/usr/bin/g++-12 -O3 -DNDEBUG CMakeFiles/linux_lua_discovery_tests.dir/test/linux_lua_discovery_tests.cpp.o -o linux_lua_discovery_tests 

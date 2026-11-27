@@ -464,7 +464,7 @@ bool VtableHook::InstallHooks(void** vtable, VtableInfo& info)
 
     // The vtable lives in .data.rel.ro -- need to make it writable
     void* slotBase = &vtable[5];
-    size_t span = reinterpret_cast<uintptr_t>(&vtable[8]) - reinterpret_cast<uintptr_t>(&vtable[5]) + 8;
+    size_t span = reinterpret_cast<uintptr_t>(&vtable[8]) - reinterpret_cast<uintptr_t>(&vtable[5]) + sizeof(void*);
 
     if (!MakeWritable(slotBase, span))
     {
@@ -489,7 +489,7 @@ void VtableHook::RemoveHooks(const VtableInfo& info)
     if (!info.vtable) return;
 
     void* slotBase = &info.vtable[5];
-    size_t span = reinterpret_cast<uintptr_t>(&info.vtable[8]) - reinterpret_cast<uintptr_t>(&info.vtable[5]) + 8;
+    size_t span = reinterpret_cast<uintptr_t>(&info.vtable[8]) - reinterpret_cast<uintptr_t>(&info.vtable[5]) + sizeof(void*);
 
     if (MakeWritable(slotBase, span))
     {
@@ -514,6 +514,23 @@ static bool IsWithinSteamclient(uintptr_t ptr, uintptr_t steamBase, size_t steam
 
 static bool IsLikelyAppCloudEnabledSlot(void** vtable, size_t slotIndex, uintptr_t steamBase, size_t steamSize)
 {
+#if defined(__x86_64__)
+    uintptr_t fn = reinterpret_cast<uintptr_t>(vtable[slotIndex]);
+    if (slotIndex != 24 || !IsWithinSteamclient(fn, steamBase, steamSize) ||
+        !CanReadMemory(reinterpret_cast<void*>(fn), 27))
+        return false;
+
+    const uint8_t* p = reinterpret_cast<const uint8_t*>(fn);
+    // steamclient x86_64: test appId in esi, preserve r12/rbp/rbx, save this
+    // from rdi and appId from esi before the null-appId branch.
+    return p[0] == 0x85 && p[1] == 0xF6 &&
+           p[2] == 0x41 && p[3] == 0x54 &&
+           p[4] == 0x55 &&
+           p[5] == 0x48 && p[6] == 0x89 && p[7] == 0xFD &&
+           p[8] == 0x53 &&
+           p[9] == 0x89 && p[10] == 0xF3 &&
+           p[11] == 0x0F && p[12] == 0x84;
+#else
     uintptr_t fn = reinterpret_cast<uintptr_t>(vtable[slotIndex]);
     if (!IsWithinSteamclient(fn, steamBase, steamSize) || !CanReadMemory(reinterpret_cast<void*>(fn), 30))
         return false;
@@ -550,6 +567,7 @@ static bool IsLikelyAppCloudEnabledSlot(void** vtable, size_t slotIndex, uintptr
         return true;
 
     return false;
+#endif
 }
 
 static size_t ResolveCloudEnabledSlot(void** vtable, uintptr_t steamBase, size_t steamSize)

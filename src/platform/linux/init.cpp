@@ -282,7 +282,10 @@ static void DoInit()
 
     g_initialized.store(true, std::memory_order_release);
     DebugLog("[CR] DoInit: SUCCESS\n");
-    Log::Info("CloudRedirect initialized successfully (all hooks active)");
+    if (pbOk)
+        Log::Info("CloudRedirect initialized successfully (all supported hooks active)");
+    else
+        Log::Warn("Transport hooks active, but protobuf helpers are unresolved; cloud RPC interception is unavailable");
     // Suppress the "Loaded successfully" desktop popup. The host stack already
     // shows its own load notification on every Steam start, so a second popup
     // here is redundant noise. The critical/error Notify() calls elsewhere are

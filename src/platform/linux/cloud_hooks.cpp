@@ -127,10 +127,10 @@ public:
     }
 };
 
-// CProtoBufMsg vtable layout on 32-bit GCC Linux (google::protobuf::MessageLite):
-//   slot[5]  (+20): Clear()
-//   slot[9]  (+36): ByteSizeLong() -> int
-//   slot[10] (+40): GetCachedSize() -> int
+// CProtoBufMsg vtable slots (offsets scale with sizeof(void*)):
+//   slot[5]:  Clear()
+//   slot[9]:  ByteSizeLong() -> size_t
+//   slot[10]: GetCachedSize() -> int
 //
 // Standalone functions found by signature scan:
 //   SerializeToArray(msg, buffer) -> uint8_t* (end pointer)
@@ -218,6 +218,12 @@ static void* ScanForPattern(void* base, size_t size, const uint8_t* pattern, siz
 }
 
 bool CloudHooks::ResolveProtobufHelpers(void* steamclientBase, size_t steamclientSize) {
+#if defined(__x86_64__)
+    (void)steamclientBase;
+    (void)steamclientSize;
+    LOG("[Hook] Protobuf helper signatures are not yet ported to x86_64");
+    return false;
+#else
     // Find SerializeToArray by its unique 16-byte signature
     void* serialize = ScanForPattern(steamclientBase, steamclientSize, kSerializeSig, sizeof(kSerializeSig));
     if (serialize) {
@@ -252,15 +258,16 @@ bool CloudHooks::ResolveProtobufHelpers(void* steamclientBase, size_t steamclien
     }
 
     return g_serializeToArray != nullptr && g_parseFromArray != nullptr;
+#endif
 }
 
 static std::vector<uint8_t> SerializeMessage(void* msg) {
     if (!msg || !g_serializeToArray) return {};
 
-    // vtable[9] = ByteSizeLong (offset +36 on 32-bit)
-    uint32_t* vtable = *(uint32_t**)msg;
+    // vtable[9] = ByteSizeLong.
+    void** vtable = *static_cast<void***>(msg);
     if (!vtable || !vtable[9]) return {};
-    using ByteSizeFn = int(__attribute__((cdecl)) *)(void*);
+    using ByteSizeFn = size_t(*)(void*);
     ProtoCrashGuard guard;
     int sig = sigsetjmp(g_protoJmpBuf, 1);
     if (sig != 0) {
@@ -268,8 +275,8 @@ static std::vector<uint8_t> SerializeMessage(void* msg) {
         return {};
     }
 
-    int size = ((ByteSizeFn)vtable[9])(msg);
-    if (size <= 0 || size > 64 * 1024 * 1024) return {};
+    size_t size = reinterpret_cast<ByteSizeFn>(vtable[9])(msg);
+    if (size == 0 || size > 64 * 1024 * 1024) return {};
 
     std::vector<uint8_t> buf(size);
     g_serializeToArray(msg, buf.data());
@@ -298,6 +305,12 @@ static const uint8_t* SerializeBodyTL(void* bodyObj, size_t* outLen) {
 }
 
 void CloudHooks::InstallGamesPlayedObserver(uintptr_t steamclientBase, size_t steamclientSize) {
+#if defined(__x86_64__)
+    (void)steamclientBase;
+    (void)steamclientSize;
+    LOG("[GamesPlayed] x86_64 Steam message observer is not yet ported");
+    return;
+#else
     if (!g_serializeToArray) {
         LOG("[GamesPlayed] serializer not resolved -- playtime tracking disabled");
         return;
@@ -310,6 +323,7 @@ void CloudHooks::InstallGamesPlayedObserver(uintptr_t steamclientBase, size_t st
 
     if (LivePlaytime::Resolve(steamclientBase, steamclientSize, g_parseFromArray))
         LivePlaytime::InstallUserCapture();
+#endif
 }
 
 static std::optional<CloudIntercept::RpcResult> DispatchCloudRpc(
@@ -627,7 +641,7 @@ static bool IsCloudRpc(const char* methodName) {
 
 // Hook: BYieldingSendMessageAndGetReply (slot 5)
 //
-// 32-bit cdecl: int(void* this, const char* method, void* req, void* resp, int* flags)
+// int(void* this, const char* method, void* req, void* resp, int* flags)
 // This is the primary synchronous RPC path.
 
 extern "C" int hook_BYieldingSend(void* pThis, const char* methodName, void* request, void* response, int* flags)
@@ -873,7 +887,7 @@ extern "C" int hook_NotificationDirect(void* pThis, const char* methodName, void
 
 // Hook: SyncSend2 (slot 8)
 //
-// 32-bit cdecl: int(void* this, const char* method, void* buf, uint32_t bufLen, void* resp, int* flags)
+// int(void* this, const char* method, void* buf, uint32_t bufLen, void* resp, int* flags)
 // Buffer-based variant -- raw protobuf bytes are directly available.
 
 extern "C" int hook_SyncSend2(void* pThis, const char* methodName, void* buf, unsigned int bufLen, void* response, int* flags)
@@ -892,6 +906,9 @@ extern "C" int hook_SyncSend2(void* pThis, const char* methodName, void* buf, un
     if (!origFn) return 0;
     
     if (!IsCloudRpc(methodName))
+        return origFn(pThis, methodName, buf, bufLen, response, flags);
+
+    if (!g_parseFromArray)
         return origFn(pThis, methodName, buf, bufLen, response, flags);
 
     if (!buf || bufLen == 0)
@@ -949,7 +966,7 @@ extern "C" int hook_SyncSend2(void* pThis, const char* methodName, void* buf, un
 }
 
 // Hook: IsCloudEnabledForApp (CUserRemoteStorage vtable slot 24)
-// 32-bit cdecl: bool(void* this, unsigned int appId)
+// bool(void* this, unsigned int appId)
 // Returns true for namespace apps so cloud toggle stays enabled.
 
 using IsCloudEnabledForApp_t = bool(*)(void* pThis, unsigned int appId);

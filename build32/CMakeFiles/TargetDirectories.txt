@@ -1,0 +1,12 @@
+/build/build32/CMakeFiles/cloud_redirect.dir
+/build/build32/CMakeFiles/cloud_redirect_cli.dir
+/build/build32/CMakeFiles/provider_config_tests.dir
+/build/build32/CMakeFiles/linux_stats_scope_tests.dir
+/build/build32/CMakeFiles/linux_stats_no_bridge_tests.dir
+/build/build32/CMakeFiles/linux_stats_archive_tests.dir
+/build/build32/CMakeFiles/linux_lua_discovery_tests.dir
+/build/build32/CMakeFiles/linux_init_stop_tests.dir
+/build/build32/CMakeFiles/linux_late_discovery_queue_tests.dir
+/build/build32/CMakeFiles/test.dir
+/build/build32/CMakeFiles/edit_cache.dir
+/build/build32/CMakeFiles/rebuild_cache.dir

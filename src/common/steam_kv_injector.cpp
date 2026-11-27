@@ -673,6 +673,10 @@ static uintptr_t FindCallInRange(uintptr_t funcStart, size_t minOff, size_t maxO
 void Configure(const ResolvedKvAddrs&) {}
 
 bool Init() {
+#if defined(__x86_64__)
+    LOG("[KvInjector] x86_64 Steam KV layouts are not yet resolved; injection disabled");
+    return false;
+#else
     bool success = false;
     std::call_once(g_initOnce, [&]() {
         FindSteamCtx ctx;
@@ -808,6 +812,7 @@ bool Init() {
         success = true;
     });
     return success || g_ready.load(std::memory_order_acquire);
+#endif
 }
 
 bool IsReady() {

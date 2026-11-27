@@ -1,10 +1,11 @@
-# Reproducible builder for the 32-bit cloud_redirect.so.
+# Reproducible builder for 64-bit and legacy 32-bit CloudRedirect artifacts.
 #
 # Ubuntu 22.04 ships glibc 2.35, old enough that the resulting preload library
 # loads inside the Steam runtime (building on a host with glibc >= 2.38 injects
 # a GLIBC_ABI_GNU_TLS dependency the Steam runtime cannot resolve). g++-12 is
 # used because json.h relies on a recursive incomplete-type container that
-# gcc-11 rejects but gcc-12+ accepts.
+# gcc-11 rejects but gcc-12+ accepts. Multilib is installed for the legacy
+# 32-bit build; the primary artifact is compiled natively as 64-bit.
 FROM ubuntu:22.04
 
 RUN dpkg --add-architecture i386 \

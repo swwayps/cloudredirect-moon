@@ -11,7 +11,6 @@
 #include <unistd.h>
 
 #define ELF_MAGIC 0x464C457F
-#define ELFCLASS32 1
 #define ELFCLASS64 2
 
 static QString getSoVersion(const QString &path)
@@ -57,7 +56,7 @@ static QString getSoVersion(const QString &path)
     return QString();
 }
 
-static bool isElf32Bit(const QString &path)
+static bool isElf64Bit(const QString &path)
 {
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly))
@@ -70,7 +69,7 @@ static bool isElf32Bit(const QString &path)
     if (header[0] != 0x7F || header[1] != 'E' || header[2] != 'L' || header[3] != 'F')
         return false;
     
-    return header[4] == ELFCLASS32;
+    return header[4] == ELFCLASS64;
 }
 
 Deployer::Deployer(QObject *parent)
@@ -184,7 +183,9 @@ void Deployer::checkPrerequisites()
     m_deployedVersion = getSoVersion(m_soDeployPath);
     
     if (m_alreadyDeployed && !m_soSourcePath.isEmpty()) {
-        if (!QFile::exists(m_soDeployPath)) {
+        if (!isElf64Bit(m_soDeployPath)) {
+            m_updateAvailable = true;
+        } else if (!QFile::exists(m_soDeployPath)) {
             m_updateAvailable = true;
         } else if (m_bundledVersion.isEmpty() || m_deployedVersion.isEmpty()) {
             QFile srcFile(m_soSourcePath);
@@ -241,8 +242,8 @@ bool Deployer::deploy()
         return false;
     }
 
-    if (!isElf32Bit(m_soSourcePath)) {
-        m_statusMessage = "Cannot deploy: cloud_redirect.so is not 32-bit, your compile is bad.";
+    if (!isElf64Bit(m_soSourcePath)) {
+        m_statusMessage = "Cannot deploy: cloud_redirect.so is not 64-bit, your compile is bad.";
         emit statusMessageChanged();
         emit deployCompleted(false);
         return false;
@@ -305,8 +306,8 @@ bool Deployer::update()
         return false;
     }
 
-    if (!isElf32Bit(m_soSourcePath)) {
-        m_statusMessage = "Cannot update: cloud_redirect.so is not 32-bit, your compile is bad.";
+    if (!isElf64Bit(m_soSourcePath)) {
+        m_statusMessage = "Cannot update: cloud_redirect.so is not 64-bit, your compile is bad.";
         emit statusMessageChanged();
         return false;
     }
