@@ -1,0 +1,1 @@
+/usr/bin/g++-12 -O3 -DNDEBUG CMakeFiles/linux_init_stop_tests.dir/test/linux_init_stop_tests.cpp.o -o linux_init_stop_tests  -lpthread 

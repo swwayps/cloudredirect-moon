@@ -1,0 +1,1 @@
+/usr/bin/g++-12 -O3 -DNDEBUG -m32 -s CMakeFiles/cloud_redirect_cli.dir/src/platform/linux/cli_main.cpp.o -o cloud_redirect_cli32  -ldl 
