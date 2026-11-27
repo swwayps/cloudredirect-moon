@@ -1,5 +1,6 @@
 // Linux CLI wrapper: dlopens cloud_redirect.so and calls CloudRedirect_CliMain.
-// Mirrors src/platform/win/cli_main.cpp. Must be 32-bit to load the 32-bit .so.
+// Mirrors src/platform/win/cli_main.cpp. The executable and loaded .so must
+// have matching architectures.
 
 #include <dlfcn.h>
 #include <limits.h>
@@ -8,6 +9,10 @@
 #include <cstdlib>
 #include <cstring>
 
+#ifndef CR_SO_FILENAME
+#define CR_SO_FILENAME "cloud_redirect.so"
+#endif
+
 typedef int (*CliMainFn)(int argc, char** argv);
 
 // Resolve cloud_redirect.so next to this executable, else the loader search path.
@@ -15,7 +20,7 @@ static void resolveSoPath(char* out, size_t outSize) {
     char exePath[PATH_MAX];
     ssize_t len = readlink("/proc/self/exe", exePath, sizeof(exePath) - 1);
     if (len <= 0) {
-        snprintf(out, outSize, "cloud_redirect.so");
+        snprintf(out, outSize, "%s", CR_SO_FILENAME);
         return;
     }
     exePath[len] = '\0';
@@ -23,9 +28,9 @@ static void resolveSoPath(char* out, size_t outSize) {
     char* lastSlash = strrchr(exePath, '/');
     if (lastSlash) {
         *(lastSlash + 1) = '\0';
-        snprintf(out, outSize, "%scloud_redirect.so", exePath);
+        snprintf(out, outSize, "%s%s", exePath, CR_SO_FILENAME);
     } else {
-        snprintf(out, outSize, "cloud_redirect.so");
+        snprintf(out, outSize, "%s", CR_SO_FILENAME);
     }
 }
 
@@ -36,7 +41,7 @@ int main(int argc, char** argv) {
     void* handle = dlopen(soPath, RTLD_NOW | RTLD_LOCAL);
     if (!handle) {
         // Fall back to loader search path (LD_LIBRARY_PATH / rpath).
-        handle = dlopen("cloud_redirect.so", RTLD_NOW | RTLD_LOCAL);
+        handle = dlopen(CR_SO_FILENAME, RTLD_NOW | RTLD_LOCAL);
     }
     if (!handle) {
         fprintf(stderr, "Error: Cannot load %s (%s)\n", soPath, dlerror());

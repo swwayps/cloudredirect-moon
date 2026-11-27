@@ -176,10 +176,10 @@ if(WIN32)
 else()
     target_include_directories(cloud_redirect PRIVATE src/platform/linux)
     target_link_libraries(cloud_redirect PRIVATE dl pthread)
-    # Steam on Linux is 32-bit; use LINUX_32BIT=ON when cross-compiling on 64-bit host
-    # Match Steam's pre-C++11 ABI
+    # Match Steam's pre-C++11 ABI.
     target_compile_definitions(cloud_redirect PRIVATE _GLIBCXX_USE_CXX11_ABI=0 _FILE_OFFSET_BITS=64)
     if(LINUX_32BIT)
+        set_target_properties(cloud_redirect PROPERTIES OUTPUT_NAME "cloud_redirect32")
         target_compile_options(cloud_redirect PRIVATE -m32)
         target_link_options(cloud_redirect PRIVATE -m32)
         target_link_libraries(cloud_redirect PRIVATE atomic)
@@ -216,12 +216,14 @@ else()
         target_link_options(cloud_redirect PRIVATE -s)
     endif()
 
-    # CLI wrapper (32-bit loader for cloud_redirect.so)
+    # CLI wrapper uses the library built for the same architecture.
     add_executable(cloud_redirect_cli
         src/platform/linux/cli_main.cpp
     )
     target_link_libraries(cloud_redirect_cli PRIVATE dl)
     if(LINUX_32BIT)
+        set_target_properties(cloud_redirect_cli PROPERTIES OUTPUT_NAME "cloud_redirect_cli32")
+        target_compile_definitions(cloud_redirect_cli PRIVATE CR_SO_FILENAME=\"cloud_redirect32.so\")
         target_compile_options(cloud_redirect_cli PRIVATE -m32)
         target_link_options(cloud_redirect_cli PRIVATE -m32)
     endif()

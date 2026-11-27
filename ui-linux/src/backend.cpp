@@ -2167,7 +2167,8 @@ QVariantMap Backend::checkProviderCredentials(const QString &provider) const
     return out;
 }
 
-// Locate the deployed CLI (crDataDir()/cloud_redirect_cli). It's a 32-bit
+// Locate the deployed CLI (crDataDir()/cloud_redirect_cli). It matches the
+// architecture of cloud_redirect.so.
 // binary run on the host via flatpak-spawn, so resolve the host path.
 QString Backend::cliExecutablePath() const
 {
